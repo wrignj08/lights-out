@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>au.wa.outage-scraper</string>
+
+    <!-- Run run.sh on an interval. Edit the path if you move the project. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/nick/Documents/Projects/Power history/run.sh</string>
+    </array>
+
+    <!-- Every 600 seconds (10 minutes) while the Mac is awake/logged in. -->
+    <key>StartInterval</key>
+    <integer>600</integer>
+
+    <!-- Catch up with one run shortly after load. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/nick/Documents/Projects/Power history</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/nick/Documents/Projects/Power history/scraper.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/nick/Documents/Projects/Power history/scraper.log</string>
+</dict>
+</plist>
