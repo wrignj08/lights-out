@@ -1,0 +1,39 @@
+name: scrape-outages
+
+# Git-scraping: mirror the Western Power outage feed on a schedule and let the
+# commit history accumulate a record of every outage on the SWIS network.
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # every 10 minutes (GitHub may delay under load)
+  workflow_dispatch: {}        # allow manual runs
+
+# Avoid overlapping runs racing on a push.
+concurrency:
+  group: scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write          # needed to push snapshots back to the repo
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Scrape and commit snapshot
+        run: |
+          python3 scrape.py
+          if git diff --quiet -- data/current.geojson; then
+            echo "no change; nothing to commit"
+            exit 0
+          fi
+          count=$(python3 -c "import json;print(len(json.load(open('data/current.geojson'))['features']))")
+          git config user.name  "outage-scraper[bot]"
+          git config user.email "actions@github.com"
+          git add data/current.geojson
+          git commit -m "snapshot: ${count} outages @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push

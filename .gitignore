@@ -1,0 +1,8 @@
+# Reconstructed artefacts are derived from git history; rebuild on demand.
+data/events.csv
+data/events.geojson
+
+# macOS / Python noise
+.DS_Store
+__pycache__/
+*.pyc
