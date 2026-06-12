@@ -66,9 +66,8 @@ derived artefacts — not committed (see `.gitignore`); rebuild any time with
 This project runs itself on **GitHub Actions** —
 [`.github/workflows/scrape.yml`](.github/workflows/scrape.yml) fires every 10
 minutes, scrapes the feed, commits a snapshot when the map has changed, rebuilds
-`events.geojson`, and deploys the viewer to GitHub Pages. Nothing of your own
-needs to stay on. (GitHub may delay scheduled runs under load; 10 minutes is a
-safe cadence.)
+`events.geojson`, and deploys the viewer to GitHub Pages. (GitHub may delay
+scheduled runs under load; 10 minutes is a safe cadence.)
 
 You can also **run it locally** — any host that can run `run.sh` on a timer
 works, e.g. Linux cron (`crontab -e`):
