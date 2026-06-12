@@ -453,7 +453,7 @@ function build(geo){
     style: f => style(isUnplanned(f.properties)),
     onEachFeature: (f,l) => l.bindPopup(popup(f.properties))
   }).addTo(map);
-  try { map.fitBounds(outageLayer.getBounds(), { padding:[40,40] }); } catch(e){}
+  try { map.fitBounds(outageLayer.getBounds(), { padding:[40,40], animate:false }); } catch(e){}
 
   // time domain from active windows (includes future planned works)
   const starts = feats.map(F.aStart).filter(v=>v!=null);
