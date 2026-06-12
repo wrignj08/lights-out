@@ -21,7 +21,7 @@
   #title { font-weight:700; font-size:15px; letter-spacing:.2px; }
   /* Time / Heatmap tabs (mutually exclusive); panelArea has a fixed height so
      the top bar never changes size when switching modes. */
-  .tabs { display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
+  .tabs { display:inline-flex; align-self:flex-start; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
   .tab { background:var(--panel); color:var(--muted); border:none; padding:4px 14px; font-size:12px; cursor:pointer; }
   .tab.active { background:var(--accent); color:#fff; }
   #panelArea { height:66px; display:flex; align-items:center; }
@@ -82,7 +82,8 @@
 <div id="controls" class="panel">
   <div id="topline">
     <span id="title">WA Power Outage History</span>
-    <span class="stat"><b id="n">0</b> active · <b id="cust">0</b> customers @ <span id="tnow">—</span></span>
+    <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers @ <span id="tnow">—</span></span>
+    <span class="stat" id="lastScrape"></span>
     <span class="stat" id="src"></span>
   </div>
   <div class="tabs">
@@ -337,6 +338,8 @@ function setMode(m){
   el("tabHeat").classList.toggle("active", heatActive);
   el("panelTime").style.display = heatActive ? "none" : "flex";
   el("panelHeat").style.display = heatActive ? "flex" : "none";
+  // the "N active @ time" stats only make sense for the timeline
+  el("liveStats").style.display = heatActive ? "none" : "";
   if(outageLayer){
     if(!heatActive && !map.hasLayer(outageLayer)) outageLayer.addTo(map);
     else if(heatActive && map.hasLayer(outageLayer)) map.removeLayer(outageLayer);
@@ -441,6 +444,10 @@ function build(geo){
                   features: geo.features.filter(f=>f.geometry && !F.stuck(f.properties)) };
   heatFeatures = shown.features;   // full features (geometry+props) for the grid
   el("src").textContent = `${shown.features.length} outages`;
+  // last scrape time: from the build stamp, else newest last-seen in the data
+  const gen = geo.generated_utc ? Date.parse(geo.generated_utc)
+            : Math.max(0, ...feats.map(F.last).filter(v=>v!=null));
+  if (gen) el("lastScrape").textContent = `last scrape ${fmt(gen)}`;
 
   outageLayer = L.geoJSON(shown, {
     style: f => style(isUnplanned(f.properties)),

@@ -201,7 +201,10 @@ def main() -> int:
         w.writeheader()
         w.writerows(rows)
     with open(GEOJSON_PATH, "w", encoding="utf-8") as f:
-        json.dump({"type": "FeatureCollection", "features": features}, f,
+        json.dump({"type": "FeatureCollection",
+                   # build time ~= last scrape (the workflow scrapes then rebuilds)
+                   "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                   "features": features}, f,
                   ensure_ascii=False, indent=1)
 
     print(f"reconstructed {len(rows)} outage events from {n_commits} snapshots",
