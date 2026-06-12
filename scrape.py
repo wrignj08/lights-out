@@ -77,6 +77,21 @@ def fetch_all() -> list:
     return features
 
 
+# Coordinate precision. The service returns ~12 decimal places (sub-micron);
+# 5dp is ~1.1m at this latitude — ample for outage-area polygons, and ~35%
+# smaller files (so smaller commits and a smaller published events.geojson).
+COORD_DP = 5
+
+
+def round_coords(obj):
+    """Recursively round every float in a GeoJSON coordinate structure."""
+    if isinstance(obj, float):
+        return round(obj, COORD_DP)
+    if isinstance(obj, list):
+        return [round_coords(x) for x in obj]
+    return obj
+
+
 def normalise(features: list) -> dict:
     """Return a deterministic FeatureCollection.
 
@@ -88,11 +103,14 @@ def normalise(features: list) -> dict:
     for ft in features:
         props = dict(ft.get("properties") or {})
         props.pop("OBJECTID", None)
+        geom = ft.get("geometry")
+        if geom and "coordinates" in geom:
+            geom = {**geom, "coordinates": round_coords(geom["coordinates"])}
         cleaned.append(
             {
                 "type": "Feature",
                 "properties": props,
-                "geometry": ft.get("geometry"),
+                "geometry": geom,
             }
         )
 
