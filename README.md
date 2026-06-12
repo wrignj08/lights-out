@@ -8,10 +8,12 @@ every outage on the SWIS (South West Interconnected System) network. It also
 ships a self-contained map viewer ([`map.html`](map.html)) with a time slider
 and an on-the-fly heatmap.
 
+### 🔦 Live map → <https://wrignj08.github.io/lights-out/>
+
 > **Unofficial / non-commercial.** This is a personal, public-interest project.
-> It is **not affiliated with, endorsed by, or connected to Western Power** or
-> any employer. Outage data © Western Power, mirrored here for non-commercial
-> transparency and research — see [Data & licence](#data--licence).
+> It is **not affiliated with, endorsed by, or connected to Western Power**.
+> Outage data © Western Power, mirrored here for non-commercial transparency
+> and research — see [Data & licence](#data--licence).
 
 ## The data source
 
@@ -86,10 +88,6 @@ cp launchd/au.wa.outage-scraper.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/au.wa.outage-scraper.plist
 ```
 
-> Note: on macOS, a background launchd job can't access `~/Documents`,
-> `~/Desktop` or `~/Downloads` without Full Disk Access — keep the checkout
-> elsewhere (e.g. `~/lights-out`) or grant access.
-
 ## Viewing the map
 
 The viewer is published with **GitHub Pages**:
@@ -156,7 +154,7 @@ Two mutually-exclusive modes (tabs, top-left):
   interval may be caught in a single snapshot (duration shown as 0).
 - `OUTAGESTARTTIME` / `ESTIMATEDRESTORATIONTIME` are Western Power's own values;
   `first_seen`/`last_seen` are when *we* observed it.
-- Cause/reason is not in the live feed (only via the per-property request form
+- Cause/reason is not in the live feed.
 
 ## Data & licence
 
