@@ -61,18 +61,17 @@ build_events.py  Walk the git history of current.geojson and emit:
 derived artefacts — not committed (see `.gitignore`); rebuild any time with
 `python3 build_events.py`.
 
-## Running it
+## How it runs
 
-### Option A — GitHub Actions (recommended: cloud, set-and-forget)
+This project runs itself on **GitHub Actions** —
+[`.github/workflows/scrape.yml`](.github/workflows/scrape.yml) fires every 10
+minutes, scrapes the feed, commits a snapshot when the map has changed, rebuilds
+`events.geojson`, and deploys the viewer to GitHub Pages. Nothing of your own
+needs to stay on. (GitHub may delay scheduled runs under load; 10 minutes is a
+safe cadence.)
 
-Push this repo to GitHub. `.github/workflows/scrape.yml` runs every 10 minutes,
-commits changed snapshots, and pushes them back. No machine of your own needs to
-stay on. (GitHub may delay scheduled runs under load; 10 min is a safe cadence.)
-
-### Option B — run it yourself on a schedule
-
-Any host that can run `run.sh` on a timer works — e.g. Linux cron
-(`crontab -e`):
+You can also **run it locally** — any host that can run `run.sh` on a timer
+works, e.g. Linux cron (`crontab -e`):
 
 ```cron
 */10 * * * * cd /path/to/lights-out && ./run.sh >> scraper.log 2>&1
