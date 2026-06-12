@@ -17,3 +17,7 @@ count=$(python3 -c "import json;print(len(json.load(open('data/current.geojson')
 git add data/current.geojson
 git commit -q -m "snapshot: ${count} outages @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "committed snapshot with ${count} outages"
+
+# Refresh the derived event table so map.html always reflects the latest
+# committed snapshots (events.geojson is git-ignored; rebuilt from history).
+python3 build_events.py

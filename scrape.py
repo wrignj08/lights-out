@@ -28,7 +28,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_PATH = os.path.join(HERE, "data", "current.geojson")
 
 PAGE_SIZE = 2000  # = the service maxRecordCount
-USER_AGENT = "wa-outage-history (github.com/your-handle/power-history)"
+USER_AGENT = "lights-out outage archiver (github.com/wrignj08/lights-out)"
 
 
 def _get(url: str, params: dict) -> dict:

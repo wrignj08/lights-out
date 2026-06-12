@@ -2,6 +2,9 @@
 data/events.csv
 data/events.geojson
 
+# runtime log from run.sh / launchd
+scraper.log
+
 # macOS / Python noise
 .DS_Store
 __pycache__/

@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WA Power Outage History</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23f5c518' d='M13 2L4 14h6l-1 8l9-12h-6z'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root { --bg:#eef2f6; --panel:#ffffff; --ink:#1a2230; --muted:#5b6b7c;
+          --unplanned:#ff5a3c; --planned:#3b9dff; --accent:#0f9d77; --line:#d4dbe3; }
+  html,body { margin:0; height:100%; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  #map { position:absolute; inset:0; background:#dfe5ec; }
+  .panel { background:var(--panel); color:var(--ink); border:1px solid var(--line);
+           border-radius:12px; box-shadow:0 6px 22px rgba(20,40,70,.18); }
+  /* Top bar spans the width; all Leaflet controls live at the BOTTOM so nothing
+     sits behind this bar (fixes the zoom-control overlap). */
+  #controls { position:absolute; z-index:1000; top:12px; left:12px; right:12px;
+              padding:10px 16px; display:flex; flex-direction:column; gap:8px; }
+  #topline { display:flex; flex-wrap:wrap; align-items:center; gap:6px 18px; }
+  #title { font-weight:700; font-size:15px; letter-spacing:.2px; }
+  /* Time / Heatmap tabs (mutually exclusive); panelArea has a fixed height so
+     the top bar never changes size when switching modes. */
+  .tabs { display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
+  .tab { background:var(--panel); color:var(--muted); border:none; padding:4px 14px; font-size:12px; cursor:pointer; }
+  .tab.active { background:var(--accent); color:#fff; }
+  #panelArea { height:66px; display:flex; align-items:center; }
+  #panelArea > div { width:100%; }
+  .stat { font-size:13px; color:var(--muted); }
+  .stat b { color:var(--ink); font-variant-numeric:tabular-nums; }
+  #tnow { color:var(--accent); font-weight:600; }
+  .timerow { display:flex; align-items:center; gap:10px; }
+  /* slider + sparkline stacked in one column so they share the exact width */
+  .timecol { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
+  #tlabel { font-size:12px; color:var(--ink); min-width:172px; text-align:right; font-variant-numeric:tabular-nums; }
+  button#play { background:#eef2f6; color:var(--ink); border:1px solid var(--line);
+                border-radius:8px; padding:5px 11px; font-size:13px; cursor:pointer; }
+  button#play:hover { background:#e1e7ee; }
+  /* range styled with a known 14px thumb so its 7px travel-inset is predictable */
+  input[type=range]#slider { -webkit-appearance:none; appearance:none; width:100%; height:6px;
+                margin:0; background:#d9e0e8; border-radius:3px; cursor:pointer; }
+  #slider::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:14px; border-radius:50%;
+                background:var(--accent); border:none; }
+  #slider::-moz-range-thumb { width:14px; height:14px; border-radius:50%; background:var(--accent); border:none; }
+  #spark { display:block; width:100%; height:46px; cursor:crosshair; }
+  #sparkcap { font-size:10px; color:var(--muted); }
+  /* heatmap controls */
+  .heatrow { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:12px; color:var(--muted);
+             border-top:1px solid var(--line); padding-top:8px; }
+  .heatrow label { display:flex; align-items:center; gap:5px; color:var(--ink); font-weight:600; }
+  .heatrow input[type=datetime-local], .heatrow select {
+             font-size:12px; padding:3px 6px; border:1px solid var(--line); border-radius:6px;
+             background:#fff; color:var(--ink); font-family:inherit; }
+  .heatrow button { background:#eef2f6; border:1px solid var(--line); border-radius:6px;
+             padding:4px 11px; font-size:12px; cursor:pointer; color:var(--ink); }
+  .heatrow button:hover { background:#e1e7ee; }
+  #heatInfo { font-variant-numeric:tabular-nums; }
+  /* legend + layers (bottom-right Leaflet controls) */
+  .legendbox { padding:8px 11px; font-size:12px; line-height:1.7; }
+  .legendbox .swatch { display:inline-block; width:11px; height:11px; border-radius:3px; margin-right:7px; vertical-align:-1px; }
+  .legendbox + .legendbox { margin-top:6px; }
+  .heatLegTitle { font-weight:600; margin-bottom:3px; }
+  .grad { width:150px; height:10px; border-radius:3px;
+          background:linear-gradient(to right, rgb(255,255,178), rgb(253,141,60), rgb(189,0,38)); }
+  .gradlabels { display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-top:2px; }
+  .leaflet-control-layers { background:var(--panel)!important; color:var(--ink); border:1px solid var(--line)!important; border-radius:12px!important; }
+  .leaflet-control-layers-expanded { padding:8px 10px!important; }
+  .leaflet-control-layers label { font-size:12px; }
+  .leaflet-bar a { background:var(--panel); color:var(--ink); border-bottom-color:var(--line); }
+  .leaflet-bar a:hover { background:#eef2f6; }
+  #err { position:absolute; z-index:1200; top:50%; left:50%; transform:translate(-50%,-50%);
+         padding:22px 26px; max-width:520px; display:none; line-height:1.5; }
+  #err code { background:#eef2f6; padding:2px 6px; border-radius:5px; color:#0c7a5d; }
+  .leaflet-popup-content { font-size:13px; line-height:1.45; }
+  .leaflet-popup-content b { color:#111; }
+  .pill { display:inline-block; padding:1px 7px; border-radius:20px; font-size:11px; font-weight:600; color:#fff; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="controls" class="panel">
+  <div id="topline">
+    <span id="title">WA Power Outage History</span>
+    <span class="stat"><b id="n">0</b> active · <b id="cust">0</b> customers @ <span id="tnow">—</span></span>
+    <span class="stat" id="src"></span>
+  </div>
+  <div class="tabs">
+    <button id="tabTime" class="tab active">Time</button>
+    <button id="tabHeat" class="tab">Heatmap</button>
+  </div>
+  <div id="panelArea">
+    <div class="timerow" id="panelTime">
+      <button id="play" title="Play through time">▶</button>
+      <div class="timecol">
+        <input type="range" id="slider" min="0" max="1000" value="1000" />
+        <svg id="spark" height="46"></svg>
+        <span id="sparkcap">customers affected over time</span>
+      </div>
+      <span id="tlabel">—</span>
+    </div>
+    <div class="heatrow" id="panelHeat" style="display:none">
+      <select id="heatMetric">
+        <option value="hours">Total outage-hours</option>
+        <option value="count">Outage count</option>
+      </select>
+      <input type="datetime-local" id="heatStart" />
+      <span>→</span>
+      <input type="datetime-local" id="heatEnd" />
+      <span id="heatInfo" class="stat"></span>
+    </div>
+  </div>
+</div>
+
+<div id="err" class="panel"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/protomaps-leaflet@4.0.1/dist/protomaps-leaflet.js"></script>
+<script>
+// ---------- base map + Leaflet controls (all at bottom) ----------
+const map = L.map("map", { preferCanvas:true, zoomControl:false, attributionControl:false })
+  .setView([-31.95, 116.0], 8);
+
+const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+  attribution:'&copy; OpenStreetMap &copy; CARTO', subdomains:"abcd", maxZoom:20 });
+const esri = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+  attribution:'Imagery &copy; Esri', maxZoom:19 });
+light.addTo(map);
+
+L.control.zoom({ position:"topleft" }).addTo(map);
+L.control.attribution({ position:"bottomleft", prefix:false }).addTo(map);
+
+// Overture buildings overlay (vector PMTiles, streamed by HTTP range requests).
+let buildings = null;
+try {
+  buildings = protomapsL.leafletLayer({
+    url: "https://overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com/tiles/2026-05-20.0/buildings.pmtiles",
+    paintRules: [{
+      dataLayer: "building",
+      symbolizer: new protomapsL.PolygonSymbolizer({ fill:"#f0c674", opacity:0.30, stroke:"#f0c674", width:0.4 })
+    }],
+    labelRules: [],
+    attribution: "Buildings &copy; Overture Maps"
+  });
+} catch (e) { console.warn("Overture layer unavailable:", e); }
+
+// ---------- field accessors (events.geojson OR live current.geojson) ----------
+const F = {
+  ref:  p => p.incident_ref ?? p.INCIDENTREF ?? "?",
+  type: p => p.outage_type ?? p.OUTAGETYPE ?? "",   // U=unplanned, F/P=scheduled
+  cust: p => Number(p.max_customers_impacted ?? p.NOCUSTOMERSIMPACTED ?? 0) || 0,
+  area: p => p.affected_area ?? p.AFFECTED_AREA ?? "",
+  start: p => p.reported_start ?? p.OUTAGESTARTTIME ?? "",
+  eta:  p => p.estimated_restoration ?? p.ESTIMATEDRESTORATIONTIME ?? "",
+  first: p => p.first_seen_utc ? Date.parse(p.first_seen_utc) : null,
+  last:  p => p.last_seen_utc  ? Date.parse(p.last_seen_utc)  : null,
+  dur:  p => p.observed_duration_hours,
+  snaps: p => p.snapshots_seen,
+  aStart: p => p.active_start_utc ? Date.parse(p.active_start_utc) : F.first(p),
+  aEnd:   p => p.active_end_utc ? Date.parse(p.active_end_utc) : F.last(p),
+  stuck:  p => p.likely_stuck === true,
+};
+const isUnplanned = p => F.type(p) === "U";
+
+const el = id => document.getElementById(id);
+function showError(html){ const e=el("err"); e.innerHTML=html; e.style.display="block"; }
+
+const style = unplanned => ({
+  color: unplanned ? "#ff5a3c" : "#3b9dff",
+  fillColor: unplanned ? "#ff5a3c" : "#3b9dff",
+  weight:1, opacity:.9, fillOpacity:.30
+});
+
+function popup(p){
+  const unplanned = isUnplanned(p);
+  const label = unplanned ? "Unplanned" : (F.type(p)==="P" ? "Planned" : "Scheduled");
+  const pill = `<span class="pill" style="background:${unplanned?'#ff5a3c':'#3b9dff'}">${label}</span>`;
+  const rows = [
+    [`<b>${F.ref(p)}</b>`, pill],
+    ["Area", F.area(p) || "—"],
+    ["Customers", F.cust(p).toLocaleString()],
+    ["Reported start", F.start(p) || "—"],
+    ["Est. restoration", F.eta(p) || "—"],
+  ];
+  if (F.aStart(p)!=null && F.aEnd(p)!=null){
+    const h = Math.round((F.aEnd(p)-F.aStart(p))/3600000*10)/10;
+    rows.push(["Active window", `<b>${new Date(F.aStart(p)).toLocaleString()} &rarr; ${new Date(F.aEnd(p)).toLocaleString()}</b> (${h} h)`]);
+  }
+  if (F.stuck(p)) rows.push(["⚠︎","stale record — end capped at frozen ETA"]);
+  return rows.map(([k,v]) => k.startsWith("<b") ? `${k} ${v}` : `<div><span style="color:#666">${k}:</span> ${v}</div>`).join("");
+}
+
+// ---------- state ----------
+let outageLayer, feats=[], tMin=null, tMax=null, temporal=false;
+let series=[], sMax=1, playing=false, playTimer=null;
+let heatFeatures=[], heatLayer=null, gridMap=null, heatTip=null;
+let heatState=null, heatCells=null, heatMax=1, heatDLat=0, heatDLng=0;
+let polyLegendEl=null, heatLegendEl=null;
+const TOL = 5*60*1000;
+
+// ---------- adaptive grid heatmap (cells scale with zoom: 10km -> 50m) ----------
+const ring0 = g => g.type==="Polygon" ? g.coordinates[0] : g.coordinates[0][0];
+function pointInPolygon(x,y,ring){
+  let inside=false;
+  for(let i=0,j=ring.length-1;i<ring.length;j=i++){
+    const xi=ring[i][0],yi=ring[i][1],xj=ring[j][0],yj=ring[j][1];
+    if(((yi>y)!==(yj>y)) && (x < (xj-xi)*(y-yi)/(yj-yi)+xi)) inside=!inside;
+  }
+  return inside;
+}
+function heatRGBA(t,a){ // 0..1 -> yellow -> orange -> red
+  const s=[[255,255,178],[253,141,60],[189,0,38]];
+  const [c0,c1,f] = t<=0.5 ? [s[0],s[1],t/0.5] : [s[1],s[2],(t-0.5)/0.5];
+  const m=i=>Math.round(c0[i]+(c1[i]-c0[i])*f);
+  return `rgba(${m(0)},${m(1)},${m(2)},${a})`;
+}
+function toLocalInput(ms){ return new Date(ms - new Date(ms).getTimezoneOffset()*60000).toISOString().slice(0,16); }
+
+// cell size (km) by zoom; fixed reference latitude keeps the grid stable on pan
+const HLAT = -32;
+function cellKmForZoom(z){
+  if(z<=8) return 10;
+  if(z===9) return 5;
+  if(z===10) return 2;
+  if(z===11) return 1;
+  if(z===12) return 0.5;
+  if(z===13) return 0.25;
+  if(z===14) return 0.1;
+  return 0.05;            // z >= 15 -> 50m
+}
+
+// Full-viewport canvas overlay: re-bins only the visible area at the current
+// zoom's cell size and redraws on move/zoom. Fill only, no cell borders.
+const HeatLayer = L.Layer.extend({
+  onAdd(map){
+    this._map=map;
+    // leaflet-zoom-animated => the canvas transform tweens with the zoom anim
+    const c=this._canvas=L.DomUtil.create("canvas","leaflet-layer leaflet-zoom-animated");
+    c.style.position="absolute"; c.style.pointerEvents="none"; c.style.transformOrigin="0 0";
+    map.getPanes().overlayPane.appendChild(c);
+    map.on("moveend zoomend resize", this._reset, this);
+    if(map.options.zoomAnimation && L.Browser.any3d) map.on("zoomanim", this._animateZoom, this);
+    this._reset();
+    return this;
+  },
+  onRemove(map){
+    map.off("moveend zoomend resize", this._reset, this);
+    map.off("zoomanim", this._animateZoom, this);
+    L.DomUtil.remove(this._canvas); this._canvas=null;
+  },
+  // scale the existing pixels to follow the zoom animation (no blank/blink);
+  // _reset then redraws crisply at the new zoom's cell size on zoomend.
+  // Uses the L.ImageOverlay approach: project the canvas's geographic bounds
+  // to the target zoom (correct for zoom in AND out, with transform-origin 0 0).
+  _animateZoom(e){
+    const scale=this._map.getZoomScale(e.zoom);
+    const offset=this._map._latLngBoundsToNewLayerBounds(this._bounds, e.zoom, e.center).min;
+    L.DomUtil.setTransform(this._canvas, offset, scale);
+  },
+  _reset(){
+    const map=this._map, size=map.getSize();
+    this._bounds = map.getBounds();   // geographic area the canvas covers (for _animateZoom)
+    // Double-buffer: build the new grid on an offscreen canvas first, so the
+    // old grid stays on screen until the new one is fully rendered.
+    recomputeHeat();
+    const buf=this._buf||(this._buf=document.createElement("canvas"));
+    buf.width=size.x; buf.height=size.y;
+    drawHeat(buf.getContext("2d"));
+    // now swap it in (only here does the visible canvas change)
+    L.DomUtil.setPosition(this._canvas, map.containerPointToLayerPoint([0,0]));
+    if(this._canvas.width!==size.x) this._canvas.width=size.x;
+    if(this._canvas.height!==size.y) this._canvas.height=size.y;
+    const ctx=this._canvas.getContext("2d");
+    ctx.clearRect(0,0,size.x,size.y);
+    ctx.drawImage(buf,0,0);
+  }
+});
+
+function recomputeHeat(){
+  if(!heatState){ heatCells=null; return; }
+  const {a,b,metric}=heatState;
+  const km=cellKmForZoom(map.getZoom());
+  heatDLat = km/110.574;
+  heatDLng = km/(111.320*Math.cos(HLAT*Math.PI/180));
+  const vb=map.getBounds().pad(0.15);     // only bin cells in (slightly padded) view
+  const VX0=Math.floor(vb.getWest()/heatDLng),  VX1=Math.floor(vb.getEast()/heatDLng);
+  const VY0=Math.floor(vb.getSouth()/heatDLat), VY1=Math.floor(vb.getNorth()/heatDLat);
+  const grid=new Map();
+  const bump=(ix,iy,w)=>{ const k=ix+","+iy,c=grid.get(k); if(c)c.val+=w; else grid.set(k,{ix,iy,val:w}); };
+  for(const f of heatFeatures){
+    const p=f.properties; let s=F.aStart(p), e=F.aEnd(p);
+    if(s==null) continue; if(e==null||e<s) e=s;
+    const ov=Math.max(0, Math.min(b,e)-Math.max(a,s)); if(ov<=0) continue;   // window overlap
+    const w = metric==="count" ? 1 : ov/3600000;
+    const ring=ring0(f.geometry);
+    let mnX=Infinity,mnY=Infinity,mxX=-Infinity,mxY=-Infinity,cx=0,cy=0;
+    for(const [lng,lat] of ring){ if(lng<mnX)mnX=lng;if(lng>mxX)mxX=lng;if(lat<mnY)mnY=lat;if(lat>mxY)mxY=lat;cx+=lng;cy+=lat; }
+    const ix0=Math.max(VX0,Math.floor(mnX/heatDLng)), ix1=Math.min(VX1,Math.floor(mxX/heatDLng));
+    const iy0=Math.max(VY0,Math.floor(mnY/heatDLat)), iy1=Math.min(VY1,Math.floor(mxY/heatDLat));
+    let any=false;
+    for(let ix=ix0;ix<=ix1;ix++) for(let iy=iy0;iy<=iy1;iy++)
+      if(pointInPolygon((ix+0.5)*heatDLng,(iy+0.5)*heatDLat,ring)){ bump(ix,iy,w); any=true; }
+    if(!any){   // polygon smaller than a cell -> its centroid cell (if in view)
+      const gx=Math.floor((cx/ring.length)/heatDLng), gy=Math.floor((cy/ring.length)/heatDLat);
+      if(gx>=VX0&&gx<=VX1&&gy>=VY0&&gy<=VY1) bump(gx,gy,w);
+    }
+  }
+  gridMap=grid; heatCells=[...grid.values()];
+  let mx=0; for(const c of heatCells) if(c.val>mx) mx=c.val; heatMax=Math.max(1,mx);
+  const peak = metric==="count" ? `${Math.round(heatMax)}/cell` : `${heatMax.toFixed(0)} h/cell`;
+  const cell = km>=1 ? `${km}km` : `${km*1000}m`;
+  el("heatInfo").textContent = `${heatState.nOut} outages · ${heatState.summary} · ${cell} cells · peak ${peak}`;
+  if(heatLegendEl){
+    el("heatLegTitle").textContent = metric==="count" ? "Outages per cell" : "Outage-hours per cell";
+    el("heatLegMax").textContent = metric==="count" ? Math.round(heatMax) : `${Math.round(heatMax)}h`;
+  }
+}
+
+function drawHeat(ctx){
+  if(!heatCells) return;
+  ctx.clearRect(0,0,ctx.canvas.width,ctx.canvas.height);
+  for(const c of heatCells){
+    const tl=map.latLngToContainerPoint([(c.iy+1)*heatDLat, c.ix*heatDLng]);
+    const br=map.latLngToContainerPoint([c.iy*heatDLat, (c.ix+1)*heatDLng]);
+    const t=c.val/heatMax;
+    ctx.fillStyle=heatRGBA(t, 0.25+0.55*t);
+    ctx.fillRect(tl.x, tl.y, Math.ceil(br.x-tl.x)+1, Math.ceil(br.y-tl.y)+1);   // +1 avoids seams
+  }
+}
+
+// Time / Heatmap are mutually exclusive, switched by the tabs. The panel area is
+// a fixed height so the top bar never resizes when switching.
+let heatActive=false;
+function setMode(m){
+  heatActive = (m==="heat");
+  el("tabTime").classList.toggle("active", !heatActive);
+  el("tabHeat").classList.toggle("active", heatActive);
+  el("panelTime").style.display = heatActive ? "none" : "flex";
+  el("panelHeat").style.display = heatActive ? "flex" : "none";
+  if(outageLayer){
+    if(!heatActive && !map.hasLayer(outageLayer)) outageLayer.addTo(map);
+    else if(heatActive && map.hasLayer(outageLayer)) map.removeLayer(outageLayer);
+  }
+  if(polyLegendEl) polyLegendEl.style.display = heatActive ? "none" : "";
+  if(heatLegendEl) heatLegendEl.style.display = heatActive ? "" : "none";
+  if(heatActive){ computeHeat(); }
+  else { removeHeat(); render(); }
+}
+function removeHeat(){
+  if(heatLayer && map.hasLayer(heatLayer)) map.removeLayer(heatLayer);
+  heatState=null; gridMap=null; el("heatInfo").textContent="";
+}
+function computeHeat(){            // (re)build the heatmap from the current heat settings
+  const a=Date.parse(el("heatStart").value), b=Date.parse(el("heatEnd").value);
+  if(isNaN(a)||isNaN(b)||b<=a){ removeHeat(); el("heatInfo").textContent="set a valid start → end"; return; }
+  const metric=el("heatMetric").value;
+  let nOut=0, totalH=0;                              // window totals (grid-independent)
+  for(const f of heatFeatures){
+    const p=f.properties; let s=F.aStart(p), e=F.aEnd(p);
+    if(s==null) continue; if(e==null||e<s) e=s;
+    const ov=Math.max(0, Math.min(b,e)-Math.max(a,s)); if(ov<=0) continue;
+    nOut++; totalH+=ov/3600000;
+  }
+  if(!nOut){ removeHeat(); el("heatInfo").textContent="no outages in range"; return; }
+  heatState = { a, b, metric, nOut,
+    summary: metric==="count" ? `${nOut} in window` : `${Math.round(totalH).toLocaleString()} outage-hours` };
+  if(!heatLayer) heatLayer=new HeatLayer();
+  if(!map.hasLayer(heatLayer)) heatLayer.addTo(map); else heatLayer._reset();
+}
+
+function activeAt(p, t){
+  let a=F.aStart(p), b=F.aEnd(p);
+  if (a==null) return true;
+  if (b==null || b<a) b=a;
+  return a-TOL <= t && t <= b+TOL;
+}
+function curT(){ return tMin==null ? null : tMin + (tMax-tMin) * (el("slider").value/1000); }
+
+const fmt = t => new Date(t).toLocaleString([], {day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
+
+function render(){
+  const t = curT();
+  let n=0, cust=0;
+  outageLayer.eachLayer(l=>{
+    const p=l.feature.properties;
+    const vis = activeAt(p, t);
+    l.setStyle({ ...style(isUnplanned(p)), opacity: vis?0.9:0, fillOpacity: vis?0.30:0 });
+    if (l._path) l._path.style.pointerEvents = vis ? "auto" : "none";
+    if (vis){ n++; cust += F.cust(p); }
+  });
+  el("n").textContent = n.toLocaleString();
+  el("cust").textContent = cust.toLocaleString();
+  if (t!=null){ el("tnow").textContent = fmt(t); el("tlabel").textContent = fmt(t); }
+  drawCursor();
+}
+
+// ---------- sparkline: total customers affected over time ----------
+function buildSeries(){
+  const S = 320;
+  const items = feats.map(p => [F.aStart(p), F.aEnd(p), F.cust(p)])
+                     .filter(([a,b]) => a!=null);
+  series = [];
+  for (let i=0;i<S;i++){
+    const t = tMin + (tMax-tMin)*i/(S-1);
+    let c=0;
+    for (const [a,b,cust] of items){ const bb=(b==null||b<a)?a:b; if (a-TOL<=t && t<=bb+TOL) c+=cust; }
+    series.push(c);
+  }
+  sMax = Math.max(1, ...series);
+}
+// PAD_X = half the 14px slider thumb. The thumb centre travels [PAD_X, W-PAD_X],
+// so we plot the sparkline and cursor over the same range to line them up.
+const PAD_X = 7;
+const sparkW = () => el("spark").clientWidth || 1000;
+function drawSpark(){
+  const svg = el("spark"), W=sparkW(), H=46, padT=4, P=PAD_X;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  const x = i => P + i/(series.length-1)*(W-2*P);
+  const y = c => H - (c/sMax)*(H-padT);
+  const line="M"+series.map((c,i)=>`${x(i).toFixed(1)},${y(c).toFixed(1)}`).join(" L");
+  const area=line+` L${(W-P).toFixed(1)},${H} L${P},${H} Z`;
+  svg.innerHTML =
+    `<path d="${area}" fill="#0f9d7722" stroke="none"/>`+
+    `<path d="${line}" fill="none" stroke="#0f9d77" stroke-width="1.4"/>`+
+    `<line id="cur" x1="0" y1="0" x2="0" y2="${H}" stroke="#1a2230" stroke-width="1" opacity="0.6"/>`;
+  el("sparkcap").textContent = `customers affected over time · peak ${sMax.toLocaleString()}`;
+  drawCursor();
+}
+function drawCursor(){
+  const cur=document.getElementById("cur"); if(!cur) return;
+  const W=sparkW(), P=PAD_X, xv = P + (el("slider").value/1000)*(W-2*P);
+  cur.setAttribute("x1",xv); cur.setAttribute("x2",xv);
+}
+
+// ---------- load + build ----------
+function build(geo){
+  // only outages with geometry; drop stuck records so they never appear
+  feats = geo.features.map(f=>f.properties).filter((p,i)=>geo.features[i].geometry && !F.stuck(p));
+  const shown = { type:"FeatureCollection",
+                  features: geo.features.filter(f=>f.geometry && !F.stuck(f.properties)) };
+  heatFeatures = shown.features;   // full features (geometry+props) for the grid
+  el("src").textContent = `${shown.features.length} outages`;
+
+  outageLayer = L.geoJSON(shown, {
+    style: f => style(isUnplanned(f.properties)),
+    onEachFeature: (f,l) => l.bindPopup(popup(f.properties))
+  }).addTo(map);
+  try { map.fitBounds(outageLayer.getBounds(), { padding:[40,40] }); } catch(e){}
+
+  // time domain from active windows (includes future planned works)
+  const starts = feats.map(F.aStart).filter(v=>v!=null);
+  const ends   = feats.map(F.aEnd).filter(v=>v!=null);
+  if (starts.length){
+    temporal=true; tMin=Math.min(...starts); tMax=Math.max(...ends, ...starts);
+    if (tMax>tMin){
+      // start the slider at "now" (latest observation), not the far-future planned tail
+      const latest = Math.max(...feats.map(F.last).filter(v=>v!=null), tMin);
+      el("slider").value = Math.round(Math.min(1, Math.max(0,(latest-tMin)/(tMax-tMin)))*1000);
+      buildSeries(); drawSpark();
+      requestAnimationFrame(drawSpark);   // redraw once the panel has its final width
+      // default the heatmap window to the full data domain
+      el("heatStart").value = toLocalInput(tMin);
+      el("heatEnd").value   = toLocalInput(tMax);
+    }
+  }
+
+  // layers control + legend (bottom-right), created now that outageLayer exists
+  const overlays = { "Outages": outageLayer };
+  if (buildings) overlays["Buildings (Overture)"] = buildings;
+  L.control.layers({ "Light":light, "Satellite (Esri)":esri }, overlays,
+                   { position:"topright", collapsed:true }).addTo(map);
+
+  // Push the top controls (zoom top-left, layers top-right) below the top bar so
+  // they don't sit behind it. Re-measure on resize since the bar height changes.
+  const offsetTop = () => {
+    const m = (el("controls").offsetHeight + 20) + "px";
+    document.querySelectorAll(".leaflet-top.leaflet-left,.leaflet-top.leaflet-right")
+      .forEach(c => c.style.marginTop = m);
+  };
+  offsetTop(); requestAnimationFrame(offsetTop);
+  window.addEventListener("resize", offsetTop);
+
+  const legend = L.control({ position:"bottomright" });
+  legend.onAdd = () => {
+    const wrap = L.DomUtil.create("div");
+    polyLegendEl = L.DomUtil.create("div","panel legendbox", wrap);
+    polyLegendEl.innerHTML = `<div><span class="swatch" style="background:#ff5a3c"></span>Unplanned outage</div>
+                   <div><span class="swatch" style="background:#3b9dff"></span>Scheduled work</div>`;
+    heatLegendEl = L.DomUtil.create("div","panel legendbox", wrap);
+    heatLegendEl.style.display="none";
+    heatLegendEl.innerHTML = `<div class="heatLegTitle" id="heatLegTitle">Outage-hours per cell</div>
+                   <div class="grad"></div>
+                   <div class="gradlabels"><span>0</span><span id="heatLegMax">—</span></div>`;
+    return wrap;
+  };
+  legend.addTo(map);
+
+  setMode("time");   // start in time-series mode (also calls render)
+}
+
+el("slider").oninput = render;
+el("play").onclick = () => {
+  playing=!playing; el("play").textContent = playing ? "❚❚" : "▶";
+  if (playing){
+    playTimer = setInterval(()=>{
+      let v=+el("slider").value+6; if(v>=1000) v=0;
+      el("slider").value=v; render();
+    }, 110);
+  } else clearInterval(playTimer);
+};
+// click the sparkline to seek (same inset as the slider thumb travel)
+el("spark").addEventListener("click", e=>{
+  const r=el("spark").getBoundingClientRect();
+  const f=Math.min(1,Math.max(0,(e.clientX-r.left-PAD_X)/(r.width-2*PAD_X)));
+  el("slider").value=Math.round(f*1000);
+  render();
+});
+window.addEventListener("resize", ()=>{ if(temporal) drawSpark(); });
+
+// mode tabs (mutually exclusive) + live heatmap controls (no Apply button)
+el("tabTime").onclick = () => setMode("time");
+el("tabHeat").onclick = () => setMode("heat");
+el("heatMetric").onchange = () => { if(heatActive) computeHeat(); };
+el("heatStart").onchange = () => { if(heatActive) computeHeat(); };
+el("heatEnd").onchange   = () => { if(heatActive) computeHeat(); };
+
+// hover readout over heat cells
+heatTip = L.tooltip({ sticky:true, direction:"top", offset:[0,-2] });
+map.on("mousemove", e=>{
+  if(!heatLayer || !map.hasLayer(heatLayer) || !gridMap){ return; }
+  const ix=Math.floor(e.latlng.lng/heatDLng), iy=Math.floor(e.latlng.lat/heatDLat);
+  const c=gridMap.get(ix+","+iy);
+  if(!c){ if(map.hasLayer(heatTip)) map.removeLayer(heatTip); return; }
+  heatTip.setLatLng(e.latlng).setContent(
+    heatState.metric==="count" ? `${c.val} outage${c.val>1?"s":""}` : `${c.val.toFixed(1)} outage-hours`);
+  if(!map.hasLayer(heatTip)) heatTip.addTo(map);
+});
+map.on("mouseout", ()=>{ if(heatTip && map.hasLayer(heatTip)) map.removeLayer(heatTip); });
+
+async function load(){
+  for (const url of ["data/events.geojson","data/current.geojson"]){
+    try {
+      const r = await fetch(url, {cache:"no-store"});
+      if (!r.ok) continue;
+      const geo = await r.json();
+      if (geo.features && geo.features.length){ build(geo); return; }
+    } catch(e){ /* try next */ }
+  }
+  showError(`<b>Couldn't load outage data.</b><br><br>
+    Browsers block <code>file://</code> pages from reading local files, so serve
+    this map locally:<br><br>
+    <code>cd ~/Documents/Projects/Power\\ history</code><br>
+    <code>python3 -m http.server 8000</code><br><br>
+    then visit <code>http://localhost:8000/map.html</code>.<br><br>
+    Also generate the data first: <code>python3 build_events.py</code>.`);
+}
+load();
+</script>
+</body>
+</html>

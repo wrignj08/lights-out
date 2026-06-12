@@ -20,12 +20,27 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TRACKED = "data/current.geojson"
 CSV_PATH = os.path.join(HERE, "data", "events.csv")
 GEOJSON_PATH = os.path.join(HERE, "data", "events.geojson")
+
+# The feed reports times in local WA time (AWST, no DST) as DD/MM/YYYY hh:mm AM/PM.
+AWST = timezone(timedelta(hours=8))
+
+
+def awst_to_utc_iso(s):
+    """Parse a feed timestamp (local AWST) -> UTC ISO string, or None."""
+    if not s or not s.strip():
+        return None
+    try:
+        dt = datetime.strptime(s.strip(), "%d/%m/%Y %I:%M %p")
+    except ValueError:
+        return None
+    return dt.replace(tzinfo=AWST).astimezone(timezone.utc).isoformat()
+
 
 CSV_FIELDS = [
     "incident_ref",
@@ -36,6 +51,11 @@ CSV_FIELDS = [
     "observed_duration_hours",
     "reported_start",
     "estimated_restoration",
+    "reported_start_utc",
+    "estimated_restoration_utc",
+    "active_start_utc",
+    "active_end_utc",
+    "likely_stuck",
     "max_customers_impacted",
     "affected_area",
     "snapshots_seen",
@@ -114,6 +134,39 @@ def main() -> int:
     features = []
     for ev in sorted(events.values(), key=lambda e: e["first_seen"]):
         dur_h = round((ev["last_seen"] - ev["first_seen"]) / 3600, 2)
+        first_dt = datetime.fromtimestamp(ev["first_seen"], tz=timezone.utc)
+        last_dt = datetime.fromtimestamp(ev["last_seen"], tz=timezone.utc)
+        rs_utc = awst_to_utc_iso(ev["reported_start"])
+        eta_utc = awst_to_utc_iso(ev["estimated_restoration"])
+
+        # Active window = when the power is/was actually out. Computed
+        # differently by type:
+        #   start = reported start (fall back to when we first saw it)
+        #   end (UNPLANNED, type U) = when the record LEFT the feed (last_seen).
+        #     The feed only lists active outages, so its disappearance is the
+        #     true restoration signal, and it's more accurate than WP's padded
+        #     ETA. We cap at ETA+grace only to catch "stuck" records that
+        #     linger long past a frozen estimate (verified bimodal: normal
+        #     clear <=2h past ETA, stuck ones >10 days).
+        #   end (PLANNED/SCHEDULED, F/P) = the scheduled restoration time. These
+        #     are pre-published works, so their stated start->ETA window is when
+        #     the power is scheduled down; feed-presence says nothing (they sit
+        #     in the feed for days before they happen).
+        STUCK_GRACE_H = 24
+        active_start_dt = datetime.fromisoformat(rs_utc) if rs_utc else first_dt
+        likely_stuck = False
+        if ev["outage_type"] == "U":
+            if eta_utc:
+                cap = datetime.fromisoformat(eta_utc) + timedelta(hours=STUCK_GRACE_H)
+                active_end_dt = min(last_dt, cap)
+                likely_stuck = last_dt > cap
+            else:
+                active_end_dt = last_dt
+        else:
+            active_end_dt = datetime.fromisoformat(eta_utc) if eta_utc else last_dt
+        if active_end_dt < active_start_dt:   # guard against bad/garbled times
+            active_end_dt = active_start_dt
+
         rows.append(
             {
                 "incident_ref": ev["incident_ref"],
@@ -124,6 +177,11 @@ def main() -> int:
                 "observed_duration_hours": dur_h,
                 "reported_start": ev["reported_start"],
                 "estimated_restoration": ev["estimated_restoration"],
+                "reported_start_utc": rs_utc,
+                "estimated_restoration_utc": eta_utc,
+                "active_start_utc": active_start_dt.isoformat(),
+                "active_end_utc": active_end_dt.isoformat(),
+                "likely_stuck": likely_stuck,
                 "max_customers_impacted": ev["max_customers"],
                 "affected_area": ev["affected_area"],
                 "snapshots_seen": ev["snapshots"],

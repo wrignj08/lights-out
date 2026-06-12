@@ -1,14 +1,17 @@
-# WA Power Outage History
+# lights-out — WA power outage history
 
 Western Power publishes a **live** outage map at
 <https://www.westernpower.com.au/outages/> but no historical data. This project
 rebuilds that history by **git-scraping**: it mirrors the map's backing feed on
 a schedule and commits each snapshot, so git history becomes a time machine of
-every outage on the SWIS (South West Interconnected System) network.
+every outage on the SWIS (South West Interconnected System) network. It also
+ships a self-contained map viewer ([`map.html`](map.html)) with a time slider
+and an on-the-fly heatmap.
 
-Inspired by Simon Willison's [git scraping](https://simonwillison.net/2020/Oct/9/git-scraping/)
-technique and the [energyq-outages](https://github.com/joelkoen/energyq-outages)
-project for Queensland.
+> **Unofficial / non-commercial.** This is a personal, public-interest project.
+> It is **not affiliated with, endorsed by, or connected to Western Power** or
+> any employer. Outage data © Western Power, mirrored here for non-commercial
+> transparency and research — see [Data & licence](#data--licence).
 
 ## The data source
 
@@ -23,8 +26,8 @@ Each outage ("Outage_Area") carries these fields:
 | Field | Meaning |
 |---|---|
 | `INCIDENTREF` | Stable incident id (e.g. `INCD-2010301-U`) — tracks one outage over time |
-| `OUTAGETYPE` | Internal type code (e.g. `F`, `U`) |
-| `PLANNEDOUTAGE` | `Planned` / `Unplanned` |
+| `OUTAGETYPE` | Internal type code: **`U` = unplanned (active), `F` = future scheduled work, `P` = planned** |
+| `PLANNEDOUTAGE` | `Planned` / `Unplanned` — **unreliable; ignore it** (it labels every `F` as "Unplanned") |
 | `OUTAGESTARTTIME` | Reported start (local, `DD/MM/YYYY hh:mm AM/PM`) |
 | `ESTIMATEDRESTORATIONTIME` | Current ETA for restoration |
 | `NOCUSTOMERSIMPACTED` | Total customers off supply |
@@ -87,6 +90,44 @@ Then drop `data/events.geojson` onto <https://geojson.io>, into QGIS, or a
 Leaflet/Mapbox map to render every past outage. Filter the CSV by
 `first_seen_utc` to draw the map "as it was" on any date.
 
+## How an outage's active window is derived
+
+`build_events.py` works out *when the power was actually out* (not just when the
+record sat in the feed). The rule is type-aware — see `active_start_utc` /
+`active_end_utc` / `likely_stuck` in the output:
+
+- **Start** = `OUTAGESTARTTIME` (reported start), falling back to first-seen.
+- **End (unplanned, `U`)** = when the record **left the feed** (`last_seen`).
+  The live feed only lists *active* outages, so its disappearance is the true
+  restoration signal — more reliable than Western Power's padded ETA. The end is
+  capped at `ETA + 24h` only to catch **stuck records** that linger in the feed
+  long past a frozen estimate (the data is cleanly bimodal: normal outages clear
+  within ~2h of their ETA, stuck ones persist for 10+ days). Stuck records are
+  flagged `likely_stuck` and excluded from the viewer.
+- **End (scheduled, `F`/`P`)** = the scheduled `ESTIMATEDRESTORATIONTIME` —
+  these are pre-published works, so their stated start→ETA window is when the
+  power is scheduled down (feed presence says nothing; they sit there for days).
+
+## The viewer (`map.html`)
+
+A single self-contained HTML file (Leaflet + CDN libs). Serve it locally —
+browsers block `file://` from reading the data:
+
+```bash
+python3 -m http.server 8000   # then open http://localhost:8000/map.html
+```
+
+Two mutually-exclusive modes (tabs, top-left):
+
+- **Time** — every outage as a polygon (red = unplanned, blue = scheduled), a
+  time slider + ▶ play to scrub history, and a sparkline of customers affected
+  over time. Planned works only appear during their scheduled window.
+- **Heatmap** — an on-the-fly grid aggregating a user-chosen date range by
+  **total outage-hours** or **outage count**. The grid resolution scales with
+  zoom (10km → 50m), rendered fill-only on a canvas, re-binned only for the
+  visible area so it stays smooth. Basemaps: Carto light / Esri satellite, with
+  an optional Overture buildings overlay.
+
 ## Limitations
 
 - Captures only outages the public feed exposes (active outages ≥ the map's
@@ -96,3 +137,14 @@ Leaflet/Mapbox map to render every past outage. Filter the CSV by
 - `OUTAGESTARTTIME` / `ESTIMATEDRESTORATIONTIME` are Western Power's own values;
   `first_seen`/`last_seen` are when *we* observed it.
 - Cause/reason is not in the live feed (only via the per-property request form
+
+## Data & licence
+
+The **code** in this repository is MIT-licensed — see [`LICENSE`](LICENSE).
+
+The **outage data** under `data/` originates from and remains the property of
+**Western Power**. It is mirrored here for non-commercial, public-interest
+transparency and research. This project is unofficial and not affiliated with,
+endorsed by, or connected to Western Power. If you reuse the data, respect
+[Western Power's terms](https://www.westernpower.com.au/terms--conditions/) and
+attribute the source.
