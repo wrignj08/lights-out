@@ -38,7 +38,7 @@
   button#play:hover { background:#e1e7ee; }
   /* range styled with a known 14px thumb so its 7px travel-inset is predictable */
   input[type=range]#slider { -webkit-appearance:none; appearance:none; width:100%; height:6px;
-                margin:0; background:#d9e0e8; border-radius:3px; cursor:pointer; }
+                margin:0; background:transparent; border-radius:3px; cursor:pointer; }
   #slider::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:14px; border-radius:50%;
                 background:var(--accent); border:none; }
   #slider::-moz-range-thumb { width:14px; height:14px; border-radius:50%; background:var(--accent); border:none; }
@@ -48,7 +48,7 @@
   .heatrow { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:12px; color:var(--muted);
              border-top:1px solid var(--line); padding-top:8px; }
   .heatrow label { display:flex; align-items:center; gap:5px; color:var(--ink); font-weight:600; }
-  .heatrow input[type=datetime-local], .heatrow select {
+  .heatrow input[type=date], .heatrow select {
              font-size:12px; padding:3px 6px; border:1px solid var(--line); border-radius:6px;
              background:#fff; color:var(--ink); font-family:inherit; }
   .heatrow button { background:#eef2f6; border:1px solid var(--line); border-radius:6px;
@@ -105,9 +105,9 @@
         <option value="hours">Total outage-hours</option>
         <option value="count">Outage count</option>
       </select>
-      <input type="datetime-local" id="heatStart" />
+      <input type="date" id="heatStart" />
       <span>→</span>
-      <input type="datetime-local" id="heatEnd" />
+      <input type="date" id="heatEnd" />
       <span id="heatInfo" class="stat"></span>
     </div>
   </div>
@@ -215,7 +215,9 @@ function heatRGBA(t,a){ // 0..1 -> yellow -> orange -> red
   const m=i=>Math.round(c0[i]+(c1[i]-c0[i])*f);
   return `rgba(${m(0)},${m(1)},${m(2)},${a})`;
 }
-function toLocalInput(ms){ return new Date(ms - new Date(ms).getTimezoneOffset()*60000).toISOString().slice(0,16); }
+// date-only <input type="date"> helpers (local dates; end date is inclusive)
+function toDateInput(ms){ const d=new Date(ms); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
+function dateToMs(val, endOfDay){ if(!val) return NaN; const [y,m,d]=val.split("-").map(Number); return new Date(y, m-1, d+(endOfDay?1:0)).getTime(); }
 
 // cell size (km) by zoom; fixed reference latitude keeps the grid stable on pan
 const HLAT = -32;
@@ -308,9 +310,7 @@ function recomputeHeat(){
   }
   gridMap=grid; heatCells=[...grid.values()];
   let mx=0; for(const c of heatCells) if(c.val>mx) mx=c.val; heatMax=Math.max(1,mx);
-  const peak = metric==="count" ? `${Math.round(heatMax)}/cell` : `${heatMax.toFixed(0)} h/cell`;
-  const cell = km>=1 ? `${km}km` : `${km*1000}m`;
-  el("heatInfo").textContent = `${heatState.nOut} outages · ${heatState.summary} · ${cell} cells · peak ${peak}`;
+  el("heatInfo").textContent = "";
   if(heatLegendEl){
     el("heatLegTitle").textContent = metric==="count" ? "Outages per cell" : "Outage-hours per cell";
     el("heatLegMax").textContent = metric==="count" ? Math.round(heatMax) : `${Math.round(heatMax)}h`;
@@ -346,7 +346,7 @@ function setMode(m){
   }
   if(polyLegendEl) polyLegendEl.style.display = heatActive ? "none" : "";
   if(heatLegendEl) heatLegendEl.style.display = heatActive ? "" : "none";
-  if(heatActive){ computeHeat(); }
+  if(heatActive){ setPlaying(false); computeHeat(); }
   else { removeHeat(); render(); }
 }
 function removeHeat(){
@@ -354,7 +354,7 @@ function removeHeat(){
   heatState=null; gridMap=null; el("heatInfo").textContent="";
 }
 function computeHeat(){            // (re)build the heatmap from the current heat settings
-  const a=Date.parse(el("heatStart").value), b=Date.parse(el("heatEnd").value);
+  const a=dateToMs(el("heatStart").value,false), b=dateToMs(el("heatEnd").value,true);
   if(isNaN(a)||isNaN(b)||b<=a){ removeHeat(); el("heatInfo").textContent="set a valid start → end"; return; }
   const metric=el("heatMetric").value;
   let nOut=0, totalH=0;                              // window totals (grid-independent)
@@ -443,7 +443,7 @@ function build(geo){
   const shown = { type:"FeatureCollection",
                   features: geo.features.filter(f=>f.geometry && !F.stuck(f.properties)) };
   heatFeatures = shown.features;   // full features (geometry+props) for the grid
-  el("src").textContent = `${shown.features.length} outages`;
+  el("src").textContent = `dataset contains ${shown.features.length.toLocaleString()} outages`;
   // last scrape time: from the build stamp, else newest last-seen in the data
   const gen = geo.generated_utc ? Date.parse(geo.generated_utc)
             : Math.max(0, ...feats.map(F.last).filter(v=>v!=null));
@@ -461,14 +461,12 @@ function build(geo){
   if (starts.length){
     temporal=true; tMin=Math.min(...starts); tMax=Math.max(...ends, ...starts);
     if (tMax>tMin){
-      // start the slider at "now" (latest observation), not the far-future planned tail
-      const latest = Math.max(...feats.map(F.last).filter(v=>v!=null), tMin);
-      el("slider").value = Math.round(Math.min(1, Math.max(0,(latest-tMin)/(tMax-tMin)))*1000);
+      el("slider").value = 0;          // always start at the beginning of the dataset
       buildSeries(); drawSpark();
       requestAnimationFrame(drawSpark);   // redraw once the panel has its final width
       // default the heatmap window to the full data domain
-      el("heatStart").value = toLocalInput(tMin);
-      el("heatEnd").value   = toLocalInput(tMax);
+      el("heatStart").value = toDateInput(tMin);
+      el("heatEnd").value   = toDateInput(tMax);
     }
   }
 
@@ -504,18 +502,22 @@ function build(geo){
   legend.addTo(map);
 
   setMode("time");   // start in time-series mode (also calls render)
+  if (temporal) setPlaying(true);   // auto-play the timeline on load
 }
 
 el("slider").oninput = render;
-el("play").onclick = () => {
-  playing=!playing; el("play").textContent = playing ? "❚❚" : "▶";
+function setPlaying(on){
+  playing = on;
+  el("play").textContent = playing ? "❚❚" : "▶";
+  clearInterval(playTimer);
   if (playing){
     playTimer = setInterval(()=>{
       let v=+el("slider").value+6; if(v>=1000) v=0;
       el("slider").value=v; render();
     }, 110);
-  } else clearInterval(playTimer);
-};
+  }
+}
+el("play").onclick = () => setPlaying(!playing);
 // click the sparkline to seek (same inset as the slider thumb travel)
 el("spark").addEventListener("click", e=>{
   const r=el("spark").getBoundingClientRect();
