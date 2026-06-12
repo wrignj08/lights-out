@@ -71,21 +71,11 @@ stay on. (GitHub may delay scheduled runs under load; 10 min is a safe cadence.)
 
 ### Option B — run it yourself on a schedule
 
-Any host that can run `run.sh` on a timer works.
-
-**Linux / cron** — add a line with `crontab -e`:
+Any host that can run `run.sh` on a timer works — e.g. Linux cron
+(`crontab -e`):
 
 ```cron
 */10 * * * * cd /path/to/lights-out && ./run.sh >> scraper.log 2>&1
-```
-
-**macOS / launchd** — edit the placeholder paths in
-`launchd/au.wa.outage-scraper.plist` (the `ProgramArguments`, `WorkingDirectory`
-and log paths) to point at your checkout, then:
-
-```bash
-cp launchd/au.wa.outage-scraper.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/au.wa.outage-scraper.plist
 ```
 
 ## Viewing the map
