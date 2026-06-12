@@ -1,39 +1,69 @@
-name: scrape-outages
+name: scrape-and-publish
 
-# Git-scraping: mirror the Western Power outage feed on a schedule and let the
-# commit history accumulate a record of every outage on the SWIS network.
+# Git-scrape the Western Power outage feed, then publish the viewer to GitHub
+# Pages. The reconstructed events.geojson is built in CI and deployed with the
+# site (never committed) so the repo stays churn-free.
 on:
   schedule:
-    - cron: "*/10 * * * *"   # every 10 minutes (GitHub may delay under load)
-  workflow_dispatch: {}        # allow manual runs
+    - cron: "*/10 * * * *"     # every 10 minutes (GitHub may delay under load)
+  workflow_dispatch: {}
 
-# Avoid overlapping runs racing on a push.
+permissions:
+  contents: write              # push snapshot commits
+  pages: write                 # deploy Pages
+  id-token: write              # Pages deployment auth
+
 concurrency:
-  group: scrape
+  group: scrape-and-publish
   cancel-in-progress: false
 
 jobs:
-  scrape:
+  run:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write          # needed to push snapshots back to the repo
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # full history — build_events.py walks every snapshot
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Scrape and commit snapshot
+      - name: Scrape and commit snapshot (only if changed)
         run: |
           python3 scrape.py
           if git diff --quiet -- data/current.geojson; then
-            echo "no change; nothing to commit"
-            exit 0
+            echo "no change in outage map; nothing to commit"
+          else
+            count=$(python3 -c "import json;print(len(json.load(open('data/current.geojson'))['features']))")
+            git config user.name  "outage-scraper[bot]"
+            git config user.email "actions@github.com"
+            git add data/current.geojson
+            git commit -m "snapshot: ${count} outages @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push
           fi
-          count=$(python3 -c "import json;print(len(json.load(open('data/current.geojson'))['features']))")
-          git config user.name  "outage-scraper[bot]"
-          git config user.email "actions@github.com"
-          git add data/current.geojson
-          git commit -m "snapshot: ${count} outages @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          git push
+
+      - name: Rebuild events table from history
+        run: python3 build_events.py
+
+      - name: Assemble Pages site
+        run: |
+          mkdir -p _site/data
+          cp map.html _site/index.html
+          cp map.html _site/map.html
+          cp data/events.geojson  _site/data/events.geojson
+          cp data/current.geojson _site/data/current.geojson
+
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true       # turn Pages on (Actions source) on first run
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

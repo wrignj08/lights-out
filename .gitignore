@@ -9,3 +9,6 @@ scraper.log
 .DS_Store
 __pycache__/
 *.pyc
+
+# local Pages build artifact
+_site/
