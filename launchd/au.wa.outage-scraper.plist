@@ -10,7 +10,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/nick/Documents/Projects/Power history/run.sh</string>
+        <string>/path/to/lights-out/run.sh</string>
     </array>
 
     <!-- Every 600 seconds (10 minutes) while the Mac is awake/logged in. -->
@@ -22,11 +22,11 @@
     <true/>
 
     <key>WorkingDirectory</key>
-    <string>/Users/nick/Documents/Projects/Power history</string>
+    <string>/path/to/lights-out</string>
 
     <key>StandardOutPath</key>
-    <string>/Users/nick/Documents/Projects/Power history/scraper.log</string>
+    <string>/path/to/lights-out/scraper.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/nick/Documents/Projects/Power history/scraper.log</string>
+    <string>/path/to/lights-out/scraper.log</string>
 </dict>
 </plist>

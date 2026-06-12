@@ -67,28 +67,48 @@ Push this repo to GitHub. `.github/workflows/scrape.yml` runs every 10 minutes,
 commits changed snapshots, and pushes them back. No machine of your own needs to
 stay on. (GitHub may delay scheduled runs under load; 10 min is a safe cadence.)
 
-### Option B — locally on this Mac (launchd)
+### Option B — run it yourself on a schedule
 
-Runs `run.sh` on an interval while your Mac is awake. Install with:
+Any host that can run `run.sh` on a timer works.
+
+**Linux / cron** — add a line with `crontab -e`:
+
+```cron
+*/10 * * * * cd /path/to/lights-out && ./run.sh >> scraper.log 2>&1
+```
+
+**macOS / launchd** — edit the placeholder paths in
+`launchd/au.wa.outage-scraper.plist` (the `ProgramArguments`, `WorkingDirectory`
+and log paths) to point at your checkout, then:
 
 ```bash
 cp launchd/au.wa.outage-scraper.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/au.wa.outage-scraper.plist
 ```
 
-(See `launchd/` for the plist; edit the interval/paths first.)
+> Note: on macOS, a background launchd job can't access `~/Documents`,
+> `~/Desktop` or `~/Downloads` without Full Disk Access — keep the checkout
+> elsewhere (e.g. `~/lights-out`) or grant access.
 
-## Reconstructing the historical map
+## Viewing the map
 
-After snapshots have accumulated:
+The viewer is published with **GitHub Pages**:
+
+**<https://wrignj08.github.io/lights-out/map.html>**
+
+`build_events.py` reconstructs `data/events.geojson` from the git history of
+`current.geojson` (each incident's first-seen → last-seen, with the type-aware
+active window above). The deploy keeps this up to date so the published map
+tracks new snapshots.
+
+To run the viewer locally instead:
 
 ```bash
-python3 build_events.py
+python3 build_events.py          # rebuild data/events.geojson from git history
+python3 -m http.server 8000      # then open http://localhost:8000/map.html
 ```
 
-Then drop `data/events.geojson` onto <https://geojson.io>, into QGIS, or a
-Leaflet/Mapbox map to render every past outage. Filter the CSV by
-`first_seen_utc` to draw the map "as it was" on any date.
+You can also drop `data/events.geojson` into QGIS or onto <https://geojson.io>.
 
 ## How an outage's active window is derived
 
