@@ -598,7 +598,7 @@ function build(geo){
   fetch("data/swis_boundary.geojson", {cache:"no-store"}).then(r=>r.ok?r.json():null).then(geo=>{
     if(!geo) return;
     const swis = L.geoJSON(geo, { interactive:false, style:{
-      color:"#5b6b7c", weight:1.5, opacity:0.85, dashArray:"5 4", fill:false } });
+      color:"#2b3a49", weight:2.5, opacity:0.95, dashArray:"6 4", fill:false } });
     overlayLayers["swis"] = swis;
     layersCtrl.addOverlay(swis, "SWIS extent (approx.)");
     if (urlState.has ? urlState.overlays.has("swis") : true){ swis.addTo(map); swis.bringToBack(); }
