@@ -8,9 +8,16 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
   :root { --bg:#eef2f6; --panel:#ffffff; --ink:#1a2230; --muted:#5b6b7c;
-          --unplanned:#ff5a3c; --planned:#3b9dff; --accent:#0f9d77; --line:#d4dbe3; }
+          --unplanned:#ff5a3c; --planned:#3b9dff; --accent:#0f9d77; --line:#d4dbe3;
+          --mapbg:#dfe5ec; --field:#ffffff; --btn:#eef2f6; --btn-hover:#e1e7ee; }
+  /* Auto dark mode — follows the OS/browser theme via prefers-color-scheme. */
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0e151f; --panel:#19222e; --ink:#e6ecf3; --muted:#9fb0c2;
+            --unplanned:#ff6b50; --planned:#4aa8ff; --accent:#1ec08f; --line:#2c3a4d;
+            --mapbg:#0c1118; --field:#222d3d; --btn:#222d3d; --btn-hover:#2c3a4d; }
+  }
   html,body { margin:0; height:100%; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
-  #map { position:absolute; inset:0; background:#dfe5ec; }
+  #map { position:absolute; inset:0; background:var(--mapbg); }
   .panel { background:var(--panel); color:var(--ink); border:1px solid var(--line);
            border-radius:12px; box-shadow:0 6px 22px rgba(20,40,70,.18); }
   /* Top bar spans the width; all Leaflet controls live at the BOTTOM so nothing
@@ -33,9 +40,9 @@
   /* slider + sparkline stacked in one column so they share the exact width */
   .timecol { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
   #tlabel { font-size:12px; color:var(--ink); min-width:172px; text-align:right; font-variant-numeric:tabular-nums; }
-  button#play { background:#eef2f6; color:var(--ink); border:1px solid var(--line);
+  button#play { background:var(--btn); color:var(--ink); border:1px solid var(--line);
                 border-radius:8px; padding:5px 11px; font-size:13px; cursor:pointer; }
-  button#play:hover { background:#e1e7ee; }
+  button#play:hover { background:var(--btn-hover); }
   /* range styled with a known 14px thumb so its 7px travel-inset is predictable */
   input[type=range]#slider { -webkit-appearance:none; appearance:none; width:100%; height:6px;
                 margin:0; background:transparent; border-radius:3px; cursor:pointer; }
@@ -50,10 +57,10 @@
   .heatrow label { display:flex; align-items:center; gap:5px; color:var(--ink); font-weight:600; }
   .heatrow input[type=date], .heatrow select {
              font-size:12px; padding:3px 6px; border:1px solid var(--line); border-radius:6px;
-             background:#fff; color:var(--ink); font-family:inherit; }
-  .heatrow button { background:#eef2f6; border:1px solid var(--line); border-radius:6px;
+             background:var(--field); color:var(--ink); font-family:inherit; }
+  .heatrow button { background:var(--btn); border:1px solid var(--line); border-radius:6px;
              padding:4px 11px; font-size:12px; cursor:pointer; color:var(--ink); }
-  .heatrow button:hover { background:#e1e7ee; }
+  .heatrow button:hover { background:var(--btn-hover); }
   #heatInfo { font-variant-numeric:tabular-nums; }
   /* legend + layers (bottom-right Leaflet controls) */
   .legendbox { padding:8px 11px; font-size:12px; line-height:1.7; }
@@ -67,15 +74,23 @@
   .leaflet-control-layers-expanded { padding:8px 10px!important; }
   .leaflet-control-layers label { font-size:12px; }
   .leaflet-bar a { background:var(--panel); color:var(--ink); border-bottom-color:var(--line); }
-  .leaflet-bar a:hover { background:#eef2f6; }
+  .leaflet-bar a:hover { background:var(--btn); }
   .gh-bar { border:1px solid var(--line)!important; border-radius:12px!important; }
   .gh-link { display:flex!important; align-items:center; justify-content:center; width:36px!important; height:36px!important; border-radius:12px!important; border-bottom:none!important; color:var(--ink); }
   .leaflet-touch .gh-link { width:44px!important; height:44px!important; }   /* match the layers toggle on touch */
   #err { position:absolute; z-index:1200; top:50%; left:50%; transform:translate(-50%,-50%);
          padding:22px 26px; max-width:520px; display:none; line-height:1.5; }
-  #err code { background:#eef2f6; padding:2px 6px; border-radius:5px; color:#0c7a5d; }
+  #err code { background:var(--btn); padding:2px 6px; border-radius:5px; color:#0c7a5d; }
+  /* Popups inherit the theme so they match in dark mode. */
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip { background:var(--panel); color:var(--ink); }
   .leaflet-popup-content { font-size:13px; line-height:1.45; }
-  .leaflet-popup-content b { color:#111; }
+  .leaflet-popup-content b { color:var(--ink); }
+  .leaflet-popup-content a { color:var(--planned); }
+  .leaflet-container a.leaflet-popup-close-button { color:var(--muted); }
+  .leaflet-control-attribution { background:var(--panel)!important; color:var(--muted)!important; }
+  .leaflet-control-attribution a { color:var(--planned)!important; }
+  /* spark cursor line — use themed ink so it stays visible on the dark map */
+  #spark #cur { stroke:var(--ink); }
   .pill { display:inline-block; padding:1px 7px; border-radius:20px; font-size:11px; font-weight:600; color:#fff; }
 </style>
 </head>
@@ -145,8 +160,13 @@ const map = L.map("map", { preferCanvas:true, zoomControl:false, attributionCont
 map.setView(urlState.z!=null ? [urlState.lat, urlState.lng] : [-31.95, 116.0],
             urlState.z!=null ? urlState.z : 8);
 
-const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+// Base street map auto-follows the OS theme: CARTO light_all in light mode,
+// dark_all in dark mode. Same layer object so the layers control + URL state stay intact.
+const darkMM = window.matchMedia("(prefers-color-scheme: dark)");
+const cartoUrl = () => `https://{s}.basemaps.cartocdn.com/${darkMM.matches?"dark_all":"light_all"}/{z}/{x}/{y}{r}.png`;
+const light = L.tileLayer(cartoUrl(), {
   attribution:'&copy; OpenStreetMap &copy; CARTO', subdomains:"abcd", maxZoom:20 });
+darkMM.addEventListener("change", () => light.setUrl(cartoUrl()));
 const esri = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
   attribution:'Imagery &copy; Esri', maxZoom:19 });
 (urlState.base==="esri" ? esri : light).addTo(map);
@@ -182,7 +202,7 @@ try {
     maxDataZoom: 14,
     paintRules: [{
       dataLayer: "building",
-      symbolizer: new protomapsL.PolygonSymbolizer({ fill:"#e0a93b", opacity:0.55, stroke:"#b9842a", width:0.5 })
+      symbolizer: new protomapsL.PolygonSymbolizer({ fill:"#9aa3ad", opacity:0.5, stroke:"#6e7680", width:0.5 })
     }],
     labelRules: [],
     attribution: "Buildings &copy; Overture Maps"
@@ -233,7 +253,7 @@ function popup(p){
     rows.push(["Active window", `<b>${new Date(F.aStart(p)).toLocaleString()} &rarr; ${new Date(F.aEnd(p)).toLocaleString()}</b> (${h} h)`]);
   }
   if (F.stuck(p)) rows.push(["⚠︎","stale record — end capped at frozen ETA"]);
-  return rows.map(([k,v]) => k.startsWith("<b") ? `${k} ${v}` : `<div><span style="color:#666">${k}:</span> ${v}</div>`).join("");
+  return rows.map(([k,v]) => k.startsWith("<b") ? `${k} ${v}` : `<div><span style="color:var(--muted)">${k}:</span> ${v}</div>`).join("");
 }
 
 // ---------- state ----------
