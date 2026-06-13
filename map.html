@@ -347,7 +347,7 @@ function setMode(m){
   if(polyLegendEl) polyLegendEl.style.display = heatActive ? "none" : "";
   if(heatLegendEl) heatLegendEl.style.display = heatActive ? "" : "none";
   if(heatActive){ setPlaying(false); computeHeat(); }
-  else { removeHeat(); render(); }
+  else { removeHeat(); render(); if(temporal) setPlaying(true); }   // auto-play when viewing the timeline
 }
 function removeHeat(){
   if(heatLayer && map.hasLayer(heatLayer)) map.removeLayer(heatLayer);
@@ -437,8 +437,10 @@ function drawCursor(){
 }
 
 // ---------- load + build ----------
-function build(geo){
-  // only outages with geometry; drop stuck records so they never appear
+// Populate / refresh the data-dependent layers. firstTime=true does the initial
+// setup (creates outageLayer, fits bounds, sets defaults); firstTime=false
+// refreshes in place — keeping the current view, mode, and date selection.
+function applyData(geo, firstTime){
   feats = geo.features.map(f=>f.properties).filter((p,i)=>geo.features[i].geometry && !F.stuck(p));
   const shown = { type:"FeatureCollection",
                   features: geo.features.filter(f=>f.geometry && !F.stuck(f.properties)) };
@@ -449,11 +451,15 @@ function build(geo){
             : Math.max(0, ...feats.map(F.last).filter(v=>v!=null));
   if (gen) el("lastScrape").textContent = `last scrape ${fmt(gen)}`;
 
-  outageLayer = L.geoJSON(shown, {
-    style: f => style(isUnplanned(f.properties)),
-    onEachFeature: (f,l) => l.bindPopup(popup(f.properties))
-  }).addTo(map);
-  try { map.fitBounds(outageLayer.getBounds(), { padding:[40,40], animate:false }); } catch(e){}
+  if (firstTime){
+    outageLayer = L.geoJSON(shown, {
+      style: f => style(isUnplanned(f.properties)),
+      onEachFeature: (f,l) => l.bindPopup(popup(f.properties))
+    }).addTo(map);
+    try { map.fitBounds(outageLayer.getBounds(), { padding:[40,40], animate:false }); } catch(e){}
+  } else {
+    outageLayer.clearLayers(); outageLayer.addData(shown);   // in-place, keep the view
+  }
 
   // time domain from active windows (includes future planned works)
   const starts = feats.map(F.aStart).filter(v=>v!=null);
@@ -461,14 +467,21 @@ function build(geo){
   if (starts.length){
     temporal=true; tMin=Math.min(...starts); tMax=Math.max(...ends, ...starts);
     if (tMax>tMin){
-      el("slider").value = 0;          // always start at the beginning of the dataset
+      if (firstTime) el("slider").value = 0;   // start at the beginning of the dataset
       buildSeries(); drawSpark();
-      requestAnimationFrame(drawSpark);   // redraw once the panel has its final width
-      // default the heatmap window to the full data domain
-      el("heatStart").value = toDateInput(tMin);
-      el("heatEnd").value   = toDateInput(tMax);
+      requestAnimationFrame(drawSpark);
+      if (firstTime){   // default the heatmap window to the full domain (keep a user's choice on refresh)
+        el("heatStart").value = toDateInput(tMin);
+        el("heatEnd").value   = toDateInput(tMax);
+      }
     }
   }
+
+  if (!firstTime){ if (heatActive) computeHeat(); else render(); }   // re-render with new data
+}
+
+function build(geo){
+  applyData(geo, true);
 
   // layers control + legend (bottom-right), created now that outageLayer exists
   const overlays = { "Outages": outageLayer };
@@ -510,8 +523,33 @@ function build(geo){
   };
   legend.addTo(map);
 
-  setMode("time");   // start in time-series mode (also calls render)
-  if (temporal) setPlaying(true);   // auto-play the timeline on load
+  setMode("heat");   // default to the heatmap view
+  startAutoRefresh();
+}
+
+// Poll for a newer events.geojson (the workflow redeploys every ~10 min) and
+// update the map in place when it changes — no page reload, view preserved.
+function startAutoRefresh(){
+  const URL = "data/events.geojson";
+  let stamp = null;
+  const probe = async () => {
+    try { const h = await fetch(URL, {method:"HEAD", cache:"no-store"});
+          return h.headers.get("last-modified") || h.headers.get("etag"); }
+    catch(e){ return null; }
+  };
+  probe().then(s => stamp = s);
+  setInterval(async () => {
+    if (document.hidden) return;            // don't poll a backgrounded tab
+    const s = await probe();
+    if (!s) return;
+    if (stamp && s !== stamp){
+      try {
+        const r = await fetch(URL, {cache:"no-store"});
+        if (r.ok){ const geo = await r.json();
+          if (geo.features && geo.features.length){ stamp = s; applyData(geo, false); } }
+      } catch(e){}
+    } else if (!stamp){ stamp = s; }
+  }, 5*60*1000);
 }
 
 el("slider").oninput = render;
