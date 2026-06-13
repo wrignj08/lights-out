@@ -26,6 +26,7 @@
               padding:10px 16px; display:flex; flex-direction:column; gap:8px; }
   #topline { display:flex; flex-wrap:wrap; align-items:center; gap:6px 18px; }
   #title { font-weight:700; font-size:15px; letter-spacing:.2px; }
+  .ver { font-size:11px; color:var(--muted); font-weight:500; margin-left:auto; }
   /* Time / Heatmap tabs (mutually exclusive); panelArea has a fixed height so
      the top bar never changes size when switching modes. */
   .tabs { display:inline-flex; align-self:flex-start; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
@@ -52,15 +53,22 @@
   #spark { display:block; width:100%; height:46px; cursor:crosshair; }
   #sparkcap { font-size:10px; color:var(--muted); }
   /* heatmap controls */
-  .heatrow { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:12px; color:var(--muted);
+  .heatrow { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; font-size:12px; color:var(--muted);
              border-top:1px solid var(--line); padding-top:8px; }
-  .heatrow label { display:flex; align-items:center; gap:5px; color:var(--ink); font-weight:600; }
-  .heatrow input[type=date], .heatrow select {
+  .heatgroup { display:flex; align-items:center; gap:7px; }
+  .heatlbl { font-size:10px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--muted); }
+  .heatrow input[type=date] {
              font-size:12px; padding:3px 6px; border:1px solid var(--line); border-radius:6px;
              background:var(--field); color:var(--ink); font-family:inherit; }
-  .heatrow button { background:var(--btn); border:1px solid var(--line); border-radius:6px;
-             padding:4px 11px; font-size:12px; cursor:pointer; color:var(--ink); }
-  .heatrow button:hover { background:var(--btn-hover); }
+  .heatarrow { color:var(--muted); }
+  /* segmented control (shared by the metric toggle + quick-range presets) */
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
+  .segbtn { background:var(--panel); color:var(--muted); border:none; border-left:1px solid var(--line);
+            padding:4px 11px; font-size:12px; line-height:1.2; cursor:pointer; font-family:inherit; }
+  .segbtn:first-child { border-left:none; }
+  .segbtn:hover { background:var(--btn); color:var(--ink); }
+  .segbtn.active { background:var(--accent); color:#fff; }
+  #heatInfo { margin-left:auto; color:var(--ink); font-weight:600; }
   #heatInfo { font-variant-numeric:tabular-nums; }
   /* legend + layers (bottom-right Leaflet controls) */
   .legendbox { padding:8px 11px; font-size:12px; line-height:1.7; }
@@ -105,6 +113,7 @@
     <!-- liveStats last: its numbers change while playing, so keep it at the end
          so nothing after it reflows -->
     <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers @ <span id="tnow">—</span></span>
+    <span class="ver">v1.0</span>
   </div>
   <div class="tabs">
     <button id="tabTime" class="tab active">Time</button>
@@ -121,13 +130,28 @@
       <span id="tlabel">—</span>
     </div>
     <div class="heatrow" id="panelHeat" style="display:none">
-      <select id="heatMetric">
-        <option value="hours">Total outage-hours</option>
-        <option value="count">Outage count</option>
-      </select>
-      <input type="date" id="heatStart" />
-      <span>→</span>
-      <input type="date" id="heatEnd" />
+      <div class="heatgroup">
+        <span class="heatlbl">Metric</span>
+        <div class="seg" id="heatMetric" role="group" aria-label="Heatmap metric">
+          <button type="button" class="segbtn active" data-metric="hours">Outage-hours</button>
+          <button type="button" class="segbtn" data-metric="count">Count</button>
+        </div>
+      </div>
+      <div class="heatgroup">
+        <span class="heatlbl">Quick</span>
+        <div class="seg" id="heatPresets" role="group" aria-label="Quick date range">
+          <button type="button" class="segbtn" data-days="7">7d</button>
+          <button type="button" class="segbtn" data-days="30">30d</button>
+          <button type="button" class="segbtn" data-days="90">90d</button>
+          <button type="button" class="segbtn" data-days="all">All</button>
+        </div>
+      </div>
+      <div class="heatgroup">
+        <span class="heatlbl">Range</span>
+        <input type="date" id="heatStart" />
+        <span class="heatarrow">→</span>
+        <input type="date" id="heatEnd" />
+      </div>
       <span id="heatInfo" class="stat"></span>
     </div>
   </div>
@@ -165,10 +189,10 @@ map.setView(urlState.z!=null ? [urlState.lat, urlState.lng] : [-31.95, 116.0],
 const darkMM = window.matchMedia("(prefers-color-scheme: dark)");
 const cartoUrl = () => `https://{s}.basemaps.cartocdn.com/${darkMM.matches?"dark_all":"light_all"}/{z}/{x}/{y}{r}.png`;
 const light = L.tileLayer(cartoUrl(), {
-  attribution:'&copy; OpenStreetMap &copy; CARTO', subdomains:"abcd", maxZoom:20 });
+  attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>', subdomains:"abcd", maxZoom:20 });
 darkMM.addEventListener("change", () => light.setUrl(cartoUrl()));
 const esri = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
-  attribution:'Imagery &copy; Esri', maxZoom:19 });
+  attribution:'Tiles &copy; <a href="https://www.esri.com">Esri</a> &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community', maxZoom:19 });
 (urlState.base==="esri" ? esri : light).addTo(map);
 
 function writeHash(){
@@ -186,7 +210,8 @@ function writeHash(){
 map.on("moveend zoomend overlayadd overlayremove baselayerchange", writeHash);
 
 L.control.zoom({ position:"topleft" }).addTo(map);
-L.control.attribution({ position:"bottomleft", prefix:false }).addTo(map);
+L.control.attribution({ position:"bottomleft",
+  prefix:'Outage data &copy; <a href="https://www.westernpower.com.au">Western Power</a>' }).addTo(map);
 
 // Overture buildings overlay (vector PMTiles, streamed by HTTP range requests).
 // protomaps-leaflet is a GridLayer (tile pane), so give it a pane ABOVE the
@@ -202,10 +227,10 @@ try {
     maxDataZoom: 14,
     paintRules: [{
       dataLayer: "building",
-      symbolizer: new protomapsL.PolygonSymbolizer({ fill:"#9aa3ad", opacity:0.5, stroke:"#6e7680", width:0.5 })
+      symbolizer: new protomapsL.PolygonSymbolizer({ fill:"#9aa3ad", opacity:0.45, stroke:"#444c56", width:1.2 })
     }],
     labelRules: [],
-    attribution: "Buildings &copy; Overture Maps"
+    attribution: 'Buildings &copy; <a href="https://overturemaps.org">Overture Maps</a> (&copy; OpenStreetMap contributors, Microsoft, Esri Community Maps, Google Open Buildings)'
   });
 } catch (e) { console.warn("Overture layer unavailable:", e); }
 if (buildings) overlayLayers["buildings"] = buildings;
@@ -375,7 +400,9 @@ function recomputeHeat(){
   }
   gridMap=grid; heatCells=[...grid.values()];
   let mx=0; for(const c of heatCells) if(c.val>mx) mx=c.val; heatMax=Math.max(1,mx);
-  el("heatInfo").textContent = "";
+  el("heatInfo").textContent = heatState
+    ? `${heatState.nOut.toLocaleString()} outage${heatState.nOut===1?"":"s"} · ${Math.round(heatState.totalH).toLocaleString()} outage-hours`
+    : "";
   if(heatLegendEl){
     el("heatLegTitle").textContent = metric==="count" ? "Outages per cell" : "Outage-hours per cell";
     el("heatLegMax").textContent = metric==="count" ? Math.round(heatMax) : `${Math.round(heatMax)}h`;
@@ -426,7 +453,7 @@ function removeHeat(){
 function computeHeat(){            // (re)build the heatmap from the current heat settings
   const a=dateToMs(el("heatStart").value,false), b=dateToMs(el("heatEnd").value,true);
   if(isNaN(a)||isNaN(b)||b<=a){ removeHeat(); el("heatInfo").textContent="set a valid start → end"; return; }
-  const metric=el("heatMetric").value;
+  const metric=currentMetric();
   let nOut=0, totalH=0;                              // window totals (grid-independent)
   for(const f of heatFeatures){
     const p=f.properties; let s=F.aStart(p), e=F.aEnd(p);
@@ -435,7 +462,7 @@ function computeHeat(){            // (re)build the heatmap from the current hea
     nOut++; totalH+=ov/3600000;
   }
   if(!nOut){ removeHeat(); el("heatInfo").textContent="no outages in range"; return; }
-  heatState = { a, b, metric, nOut,
+  heatState = { a, b, metric, nOut, totalH,
     summary: metric==="count" ? `${nOut} in window` : `${Math.round(totalH).toLocaleString()} outage-hours` };
   if(!heatLayer) heatLayer=new HeatLayer();
   if(!map.hasLayer(heatLayer)) heatLayer.addTo(map); else heatLayer._reset();
@@ -573,9 +600,9 @@ function build(geo){
   applyData(geo, true);
 
   // layers control + legend (bottom-right), created now that outageLayer exists
-  const overlays = { "Outages": outageLayer };
+  const overlays = {};
   if (buildings) overlays["Buildings (Overture)"] = buildings;
-  const layersCtrl = L.control.layers({ "Light":light, "Satellite (Esri)":esri }, overlays,
+  const layersCtrl = L.control.layers({ "Street":light, "Satellite (Esri)":esri }, overlays,
                    { position:"topright", collapsed:true }).addTo(map);
 
   // restore overlay toggles from the URL, else defaults (buildings + SWIS on)
@@ -598,7 +625,7 @@ function build(geo){
   fetch("data/swis_boundary.geojson", {cache:"no-store"}).then(r=>r.ok?r.json():null).then(geo=>{
     if(!geo) return;
     const swis = L.geoJSON(geo, { interactive:false, style:{
-      color:"#2b3a49", weight:2.5, opacity:0.95, dashArray:"6 4", fill:false } });
+      color:"#5b6b7c", weight:1.5, opacity:0.85, dashArray:"5 4", fill:false } });
     overlayLayers["swis"] = swis;
     layersCtrl.addOverlay(swis, "SWIS extent (approx.)");
     if (urlState.has ? urlState.overlays.has("swis") : true){ swis.addTo(map); swis.bringToBack(); }
@@ -625,6 +652,9 @@ function build(geo){
     heatLegendEl.innerHTML = `<div class="heatLegTitle" id="heatLegTitle">Outage-hours per cell</div>
                    <div class="grad"></div>
                    <div class="gradlabels"><span>0</span><span id="heatLegMax">—</span></div>`;
+    // SWIS row lives in its own box so it stays visible in both time + heatmap modes
+    const swisLegendEl = L.DomUtil.create("div","panel legendbox", wrap);
+    swisLegendEl.innerHTML = `<div><span class="swatch" style="background:transparent;border:1.5px dashed #5b6b7c"></span>SWIS extent (approx.)</div>`;
     return wrap;
   };
   legend.addTo(map);
@@ -685,9 +715,32 @@ window.addEventListener("resize", ()=>{ if(temporal) drawSpark(); });
 // mode tabs (mutually exclusive) + live heatmap controls (no Apply button)
 el("tabTime").onclick = () => setMode("time");
 el("tabHeat").onclick = () => setMode("heat");
-el("heatMetric").onchange = () => { if(heatActive) computeHeat(); };
-el("heatStart").onchange = () => { if(heatActive) computeHeat(); };
-el("heatEnd").onchange   = () => { if(heatActive) computeHeat(); };
+
+// --- heatmap metric toggle (segmented control) ---
+const metricBtns = [...document.querySelectorAll("#heatMetric .segbtn")];
+function currentMetric(){ return (document.querySelector("#heatMetric .segbtn.active")||{}).dataset?.metric || "hours"; }
+metricBtns.forEach(b => b.onclick = () => {
+  metricBtns.forEach(x => x.classList.toggle("active", x===b));
+  if(heatActive) computeHeat();
+});
+
+// --- quick-range presets: fill the date pickers relative to the data domain ---
+const presetBtns = [...document.querySelectorAll("#heatPresets .segbtn")];
+const clearPresets = () => presetBtns.forEach(x => x.classList.remove("active"));
+presetBtns.forEach(b => b.onclick = () => {
+  const dmin = el("heatStart").min, dmax = el("heatEnd").max;
+  if(!dmin || !dmax) return;                         // data domain not known yet
+  const start = b.dataset.days==="all"
+    ? dmin
+    : (s => s < dmin ? dmin : s)(toDateInput(dateToMs(dmax,false) - Number(b.dataset.days)*86400000));
+  el("heatStart").value = start;
+  el("heatEnd").value   = dmax;
+  presetBtns.forEach(x => x.classList.toggle("active", x===b));
+  if(heatActive) computeHeat();
+});
+
+el("heatStart").onchange = () => { clearPresets(); if(heatActive) computeHeat(); };
+el("heatEnd").onchange   = () => { clearPresets(); if(heatActive) computeHeat(); };
 
 // hover readout over heat cells
 heatTip = L.tooltip({ sticky:true, direction:"top", offset:[0,-2] });

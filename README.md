@@ -8,6 +8,14 @@ every outage on the SWIS (South West Interconnected System) network. It also
 ships a self-contained map viewer ([`map.html`](map.html)) with a time slider
 and an on-the-fly heatmap.
 
+> **History from 9 June 2026** — collection began on this date; there is no data
+> before it (the live feed carries no history of its own).
+
+> **Scope: SWIS only.** This covers **only** Western Power's South West
+> Interconnected System (the south-west of WA — roughly Kalbarri to Kalgoorlie to
+> Albany). It does **not** include Horizon Power's regional and remote networks
+> (the rest of the state), which aren't in this feed.
+
 ### 🔦 Live map → <https://wrignj08.github.io/lights-out/>
 
 > **Unofficial / non-commercial.** This is a personal, public-interest project.
@@ -128,14 +136,25 @@ Two mutually-exclusive modes (tabs, top-left):
 - **Time** — every outage as a polygon (red = unplanned, blue = scheduled), a
   time slider + ▶ play to scrub history, and a sparkline of customers affected
   over time. Planned works only appear during their scheduled window.
-- **Heatmap** — an on-the-fly grid aggregating a user-chosen date range by
-  **total outage-hours** or **outage count**. The grid resolution scales with
-  zoom (10km → 50m), rendered fill-only on a canvas, re-binned only for the
-  visible area so it stays smooth. Basemaps: Carto light / Esri satellite, with
-  an optional Overture buildings overlay.
+- **Heatmap** (the default view) — an on-the-fly grid aggregating a chosen date
+  range by **total outage-hours** or **outage count**. The grid resolution scales
+  with zoom (10km → 50m), rendered fill-only on a canvas, re-binned only for the
+  visible area so it stays smooth.
+
+It also:
+
+- **Remembers state in the URL** — centre, zoom, mode, basemap and layer toggles
+  live in the address bar, so a refresh (or a shared link) lands on the same view.
+- **Auto-refreshes** — picks up newly-published snapshots in place, no reload;
+  the top bar shows how long ago the last scrape was.
+- **Layers** (top-right) — Carto light / Esri satellite basemaps, an approximate
+  SWIS-extent outline, and an Overture buildings overlay (visible when zoomed in).
+- **Follows your OS dark/light theme.**
 
 ## Limitations
 
+- **SWIS only** — Western Power's south-west network; Horizon Power's regional
+  and remote networks (the rest of WA) are not covered.
 - Captures only outages the public feed exposes (active outages ≥ the map's
   reporting threshold); very brief or sub-threshold outages may never appear.
 - Duration resolution = scrape interval (10 min). An outage shorter than one
