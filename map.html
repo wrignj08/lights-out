@@ -68,7 +68,9 @@
   .leaflet-control-layers label { font-size:12px; }
   .leaflet-bar a { background:var(--panel); color:var(--ink); border-bottom-color:var(--line); }
   .leaflet-bar a:hover { background:#eef2f6; }
-  .gh-link { display:flex!important; align-items:center; justify-content:center; color:var(--ink); }
+  .gh-bar { border:1px solid var(--line)!important; border-radius:12px!important; }
+  .gh-link { display:flex!important; align-items:center; justify-content:center; width:36px!important; height:36px!important; border-radius:12px!important; border-bottom:none!important; color:var(--ink); }
+  .leaflet-touch .gh-link { width:44px!important; height:44px!important; }   /* match the layers toggle on touch */
   #err { position:absolute; z-index:1200; top:50%; left:50%; transform:translate(-50%,-50%);
          padding:22px 26px; max-width:520px; display:none; line-height:1.5; }
   #err code { background:#eef2f6; padding:2px 6px; border-radius:5px; color:#0c7a5d; }
@@ -121,32 +123,72 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/protomaps-leaflet@4.0.1/dist/protomaps-leaflet.js"></script>
 <script>
+// ---------- URL state (hash): center/zoom, mode, basemap, overlay toggles ----------
+function parseHash(){
+  const st = { overlays:new Set(), has: location.hash.length > 1 };
+  for(const part of location.hash.replace(/^#/,"").split("&")){
+    const [k,v] = part.split("=");
+    if(k==="m" && v){ const [z,la,ln]=v.split("/").map(Number);
+      if(!isNaN(z)&&!isNaN(la)&&!isNaN(ln)){ st.z=z; st.lat=la; st.lng=ln; } }
+    else if(k==="v") st.mode=v;
+    else if(k==="b") st.base=v;
+    else if(k==="o" && v) v.split(",").forEach(x=>st.overlays.add(x));
+  }
+  return st;
+}
+const urlState = parseHash();
+const overlayLayers = {};   // key -> layer, registered as overlays are created
+let restoring = true;       // suppress hash writes until the initial state is applied
+
 // ---------- base map + Leaflet controls (all at bottom) ----------
-const map = L.map("map", { preferCanvas:true, zoomControl:false, attributionControl:false })
-  .setView([-31.95, 116.0], 8);
+const map = L.map("map", { preferCanvas:true, zoomControl:false, attributionControl:false });
+map.setView(urlState.z!=null ? [urlState.lat, urlState.lng] : [-31.95, 116.0],
+            urlState.z!=null ? urlState.z : 8);
 
 const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
   attribution:'&copy; OpenStreetMap &copy; CARTO', subdomains:"abcd", maxZoom:20 });
 const esri = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
   attribution:'Imagery &copy; Esri', maxZoom:19 });
-light.addTo(map);
+(urlState.base==="esri" ? esri : light).addTo(map);
+
+function writeHash(){
+  if(restoring) return;
+  const c = map.getCenter();
+  const parts = [
+    `m=${map.getZoom()}/${c.lat.toFixed(4)}/${c.lng.toFixed(4)}`,
+    `v=${heatActive?"heat":"time"}`,
+    `b=${map.hasLayer(esri)?"esri":"light"}`,
+  ];
+  const on = Object.keys(overlayLayers).filter(k => map.hasLayer(overlayLayers[k]));
+  if(on.length) parts.push("o="+on.join(","));
+  history.replaceState(null, "", "#"+parts.join("&"));
+}
+map.on("moveend zoomend overlayadd overlayremove baselayerchange", writeHash);
 
 L.control.zoom({ position:"topleft" }).addTo(map);
 L.control.attribution({ position:"bottomleft", prefix:false }).addTo(map);
 
 // Overture buildings overlay (vector PMTiles, streamed by HTTP range requests).
+// protomaps-leaflet is a GridLayer (tile pane), so give it a pane ABOVE the
+// opaque basemap or it draws underneath it. maxDataZoom:14 = the data's max
+// zoom (tiles only exist to z14) so it overzooms instead of drawing blank.
+map.createPane("buildingsPane");
+map.getPane("buildingsPane").style.zIndex = 250;   // between tiles (200) and overlays (400)
 let buildings = null;
 try {
   buildings = protomapsL.leafletLayer({
     url: "https://overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com/tiles/2026-05-20.0/buildings.pmtiles",
+    pane: "buildingsPane",
+    maxDataZoom: 14,
     paintRules: [{
       dataLayer: "building",
-      symbolizer: new protomapsL.PolygonSymbolizer({ fill:"#f0c674", opacity:0.30, stroke:"#f0c674", width:0.4 })
+      symbolizer: new protomapsL.PolygonSymbolizer({ fill:"#e0a93b", opacity:0.55, stroke:"#b9842a", width:0.5 })
     }],
     labelRules: [],
     attribution: "Buildings &copy; Overture Maps"
   });
 } catch (e) { console.warn("Overture layer unavailable:", e); }
+if (buildings) overlayLayers["buildings"] = buildings;
 
 // ---------- field accessors (events.geojson OR live current.geojson) ----------
 const F = {
@@ -355,6 +397,7 @@ function setMode(m){
     if(temporal){ drawSpark(); setPlaying(true); }
     render();
   }
+  writeHash();
 }
 function removeHeat(){
   if(heatLayer && map.hasLayer(heatLayer)) map.removeLayer(heatLayer);
@@ -478,7 +521,7 @@ function applyData(geo, firstTime){
       style: f => style(isUnplanned(f.properties)),
       onEachFeature: (f,l) => l.bindPopup(popup(f.properties))
     }).addTo(map);
-    try { map.fitBounds(outageLayer.getBounds(), { padding:[40,40], animate:false }); } catch(e){}
+    if (urlState.z==null) { try { map.fitBounds(outageLayer.getBounds(), { padding:[40,40], animate:false }); } catch(e){} }
   } else {
     outageLayer.clearLayers(); outageLayer.addData(shown);   // in-place, keep the view
   }
@@ -515,14 +558,17 @@ function build(geo){
   const layersCtrl = L.control.layers({ "Light":light, "Satellite (Esri)":esri }, overlays,
                    { position:"topright", collapsed:true }).addTo(map);
 
+  // restore overlay toggles from the URL, else defaults (buildings + SWIS on)
+  if (buildings && (urlState.has ? urlState.overlays.has("buildings") : true)) buildings.addTo(map);
+
   // GitHub source link, stacked under the layers menu (top-right)
   const ghCtrl = L.control({ position:"topright" });
   ghCtrl.onAdd = () => {
-    const bar = L.DomUtil.create("div", "leaflet-bar");
+    const bar = L.DomUtil.create("div", "leaflet-bar gh-bar");
     const a = L.DomUtil.create("a", "gh-link", bar);
     a.href = "https://github.com/wrignj08/lights-out";
     a.target = "_blank"; a.rel = "noopener"; a.title = "View source on GitHub";
-    a.innerHTML = `<svg viewBox="0 0 16 16" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 012-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`;
+    a.innerHTML = `<svg viewBox="0 0 16 16" width="24" height="24" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 012-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`;
     L.DomEvent.disableClickPropagation(a);
     return bar;
   };
@@ -532,9 +578,10 @@ function build(geo){
   fetch("data/swis_boundary.geojson", {cache:"no-store"}).then(r=>r.ok?r.json():null).then(geo=>{
     if(!geo) return;
     const swis = L.geoJSON(geo, { interactive:false, style:{
-      color:"#5b6b7c", weight:1.5, opacity:0.85, dashArray:"5 4", fill:false } }).addTo(map);
-    swis.bringToBack();
+      color:"#5b6b7c", weight:1.5, opacity:0.85, dashArray:"5 4", fill:false } });
+    overlayLayers["swis"] = swis;
     layersCtrl.addOverlay(swis, "SWIS extent (approx.)");
+    if (urlState.has ? urlState.overlays.has("swis") : true){ swis.addTo(map); swis.bringToBack(); }
   }).catch(()=>{});
 
   // Push the top controls (zoom top-left, layers top-right) below the top bar so
@@ -562,7 +609,9 @@ function build(geo){
   };
   legend.addTo(map);
 
-  setMode("heat");   // default to the heatmap view
+  setMode(urlState.has && urlState.mode ? urlState.mode : "heat");   // restore mode, else heatmap
+  restoring = false;   // initial state applied — hash writes can begin
+  writeHash();
   startAutoRefresh();
 }
 
