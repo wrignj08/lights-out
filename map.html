@@ -470,9 +470,13 @@ function applyData(geo, firstTime){
       if (firstTime) el("slider").value = 0;   // start at the beginning of the dataset
       buildSeries(); drawSpark();
       requestAnimationFrame(drawSpark);
+      // bound the pickers to the data domain so you can't go before/after the data
+      const dmin = toDateInput(tMin), dmax = toDateInput(tMax);
+      el("heatStart").min = el("heatEnd").min = dmin;
+      el("heatStart").max = el("heatEnd").max = dmax;
       if (firstTime){   // default the heatmap window to the full domain (keep a user's choice on refresh)
-        el("heatStart").value = toDateInput(tMin);
-        el("heatEnd").value   = toDateInput(tMax);
+        el("heatStart").value = dmin;
+        el("heatEnd").value   = dmax;
       }
     }
   }
