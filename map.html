@@ -381,6 +381,21 @@ function curT(){ return tMin==null ? null : tMin + (tMax-tMin) * (el("slider").v
 
 const fmt = t => new Date(t).toLocaleString([], {day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
 
+// "last scrape <time> (N min ago)" — ticks on its own so the relative bit stays live
+let lastScrapeMs = null;
+function ago(ms){
+  const m = Math.round((Date.now()-ms)/60000);
+  if (m < 1)  return "just now";
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m/60);
+  if (h < 24) return `${h}h ${m%60}m ago`;
+  return `${Math.floor(h/24)}d ago`;
+}
+function updateLastScrape(){
+  if (lastScrapeMs!=null) el("lastScrape").textContent = `last scrape ${fmt(lastScrapeMs)} (${ago(lastScrapeMs)})`;
+}
+setInterval(updateLastScrape, 30000);
+
 function render(){
   const t = curT();
   let n=0, cust=0;
@@ -449,7 +464,7 @@ function applyData(geo, firstTime){
   // last scrape time: from the build stamp, else newest last-seen in the data
   const gen = geo.generated_utc ? Date.parse(geo.generated_utc)
             : Math.max(0, ...feats.map(F.last).filter(v=>v!=null));
-  if (gen) el("lastScrape").textContent = `last scrape ${fmt(gen)}`;
+  if (gen){ lastScrapeMs = gen; updateLastScrape(); }
 
   if (firstTime){
     outageLayer = L.geoJSON(shown, {
