@@ -82,9 +82,11 @@
 <div id="controls" class="panel">
   <div id="topline">
     <span id="title">WA Power Outage History</span>
-    <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers @ <span id="tnow">—</span></span>
     <span class="stat" id="lastScrape"></span>
     <span class="stat" id="src"></span>
+    <!-- liveStats last: its numbers change while playing, so keep it at the end
+         so nothing after it reflows -->
+    <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers @ <span id="tnow">—</span></span>
   </div>
   <div class="tabs">
     <button id="tabTime" class="tab active">Time</button>
@@ -347,7 +349,11 @@ function setMode(m){
   if(polyLegendEl) polyLegendEl.style.display = heatActive ? "none" : "";
   if(heatLegendEl) heatLegendEl.style.display = heatActive ? "" : "none";
   if(heatActive){ setPlaying(false); computeHeat(); }
-  else { removeHeat(); render(); if(temporal) setPlaying(true); }   // auto-play when viewing the timeline
+  else {   // entering the timeline: redraw the sparkline now the panel is visible
+    removeHeat();
+    if(temporal){ drawSpark(); setPlaying(true); }
+    render();
+  }
 }
 function removeHeat(){
   if(heatLayer && map.hasLayer(heatLayer)) map.removeLayer(heatLayer);
