@@ -56,6 +56,7 @@ jobs:
           cp map.html _site/map.html
           cp data/events.geojson  _site/data/events.geojson
           cp data/current.geojson _site/data/current.geojson
+          cp data/swis_boundary.geojson _site/data/swis_boundary.geojson
 
       - uses: actions/configure-pages@v5
         with:

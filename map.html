@@ -473,8 +473,17 @@ function build(geo){
   // layers control + legend (bottom-right), created now that outageLayer exists
   const overlays = { "Outages": outageLayer };
   if (buildings) overlays["Buildings (Overture)"] = buildings;
-  L.control.layers({ "Light":light, "Satellite (Esri)":esri }, overlays,
+  const layersCtrl = L.control.layers({ "Light":light, "Satellite (Esri)":esri }, overlays,
                    { position:"topright", collapsed:true }).addTo(map);
+
+  // approximate SWIS extent (derived from Western Power network) — faint outline
+  fetch("data/swis_boundary.geojson", {cache:"no-store"}).then(r=>r.ok?r.json():null).then(geo=>{
+    if(!geo) return;
+    const swis = L.geoJSON(geo, { interactive:false, style:{
+      color:"#5b6b7c", weight:1.5, opacity:0.85, dashArray:"5 4", fill:false } }).addTo(map);
+    swis.bringToBack();
+    layersCtrl.addOverlay(swis, "SWIS extent (approx.)");
+  }).catch(()=>{});
 
   // Push the top controls (zoom top-left, layers top-right) below the top bar so
   // they don't sit behind it. Re-measure on resize since the bar height changes.
