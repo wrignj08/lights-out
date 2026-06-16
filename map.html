@@ -669,25 +669,30 @@ function build(geo){
 // update the map in place when it changes — no page reload, view preserved.
 function startAutoRefresh(){
   const URL = "data/events.geojson";
-  let stamp = null;
-  const probe = async () => {
-    try { const h = await fetch(URL, {method:"HEAD", cache:"no-store"});
-          return h.headers.get("last-modified") || h.headers.get("etag"); }
-    catch(e){ return null; }
-  };
-  probe().then(s => stamp = s);
-  setInterval(async () => {
-    if (document.hidden) return;            // don't poll a backgrounded tab
-    const s = await probe();
-    if (!s) return;
-    if (stamp && s !== stamp){
-      try {
-        const r = await fetch(URL, {cache:"no-store"});
-        if (r.ok){ const geo = await r.json();
-          if (geo.features && geo.features.length){ stamp = s; applyData(geo, false); } }
-      } catch(e){}
-    } else if (!stamp){ stamp = s; }
-  }, 5*60*1000);
+  let stamp = null, busy = false;
+  async function check(){
+    if (document.hidden || busy) return;
+    busy = true;
+    try {
+      const h = await fetch(URL, {method:"HEAD", cache:"no-store"});
+      const s = h.headers.get("etag") || h.headers.get("last-modified");
+      if (s){
+        if (stamp == null) stamp = s;                 // first observation
+        else if (s !== stamp){                        // new deploy -> pull + apply in place
+          const r = await fetch(URL, {cache:"no-store"});
+          if (r.ok){
+            const geo = await r.json();
+            if (geo.features && geo.features.length){ stamp = s; applyData(geo, false); }
+          }
+        }
+      }
+    } catch(e){} finally { busy = false; }
+  }
+  check();
+  setInterval(check, 90*1000);
+  // timers freeze in a backgrounded tab, so also check the moment it regains focus
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) check(); });
+  window.addEventListener("focus", check);
 }
 
 el("slider").oninput = render;
