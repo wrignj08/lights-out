@@ -100,6 +100,44 @@
   /* spark cursor line — use themed ink so it stays visible on the dark map */
   #spark #cur { stroke:var(--ink); }
   .pill { display:inline-block; padding:1px 7px; border-radius:20px; font-size:11px; font-weight:600; color:#fff; }
+  /* ---- Mobile: reclaim width, stop the fixed-height panel from clipping wrapped
+         controls, and stack the time slider on its own full-width row. The
+         offsetTop() JS re-measures the bar height on resize, so a taller/variable
+         bar pushes the map controls down correctly. ---- */
+  @media (max-width: 600px) {
+    #controls { top:6px; left:6px; right:6px; padding:8px 11px; gap:6px; }
+    #title { font-size:13px; }
+    /* stack the title/stat lines so changing playback numbers can't reflow the
+       row and make the stats jump line-to-line; each sits on its own row */
+    #topline { flex-direction:column; align-items:flex-start; gap:2px; }
+    .stat { font-size:11px; }
+    #liveStats { white-space:nowrap; }
+    .ver { display:none; }                 /* version chip is non-essential on a phone */
+    /* let the time/heat panels grow with their content instead of clipping at 66px */
+    #panelArea { height:auto; min-height:46px; }
+    /* time row: play + label share line 1, slider/spark span the full width below */
+    .timerow { flex-wrap:wrap; gap:6px 10px; }
+    #tlabel { min-width:0; flex:1; text-align:left; }
+    .timecol { order:3; flex-basis:100%; }
+    /* heat row: stack each group on its own line so the segmented controls
+       never overflow the viewport width */
+    .heatrow { flex-direction:column; align-items:stretch; gap:8px; }
+    .heatgroup { width:100%; }
+    /* date range on its own full-width row: a grid lays the two pickers in equal
+       columns (1fr) either side of the arrow. min-width:0 lets the native date
+       inputs shrink below their content instead of overflowing the row. */
+    .heatgroup:has(input[type=date]) { display:grid; grid-template-columns:auto 1fr auto 1fr; gap:7px; }
+    .heatrow input[type=date] { min-width:0; }
+    #heatInfo { margin-left:0; }
+    /* attribution: collapse behind an (i) badge so it doesn't eat two rows at the
+       bottom of a phone. Tap the (i) to reveal the full credits (.attrib-open). */
+    .leaflet-control-attribution.attrib-collapsible:not(.attrib-open) { font-size:0; padding:0; }
+    .leaflet-control-attribution.attrib-collapsible:not(.attrib-open)::before {
+      content:"\24D8"; font-size:16px; line-height:22px; display:block;
+      width:22px; height:22px; text-align:center; color:var(--muted); cursor:pointer; }
+    .leaflet-control-attribution.attrib-open { max-width:calc(100vw - 12px);
+      font-size:10px; white-space:normal; }
+  }
 </style>
 </head>
 <body>
@@ -113,7 +151,7 @@
     <!-- liveStats last: its numbers change while playing, so keep it at the end
          so nothing after it reflows -->
     <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers @ <span id="tnow">—</span></span>
-    <span class="ver">v1.0</span>
+    <span class="ver">v1.1</span>
   </div>
   <div class="tabs">
     <button id="tabTime" class="tab active">Time</button>
@@ -135,15 +173,6 @@
         <div class="seg" id="heatMetric" role="group" aria-label="Heatmap metric">
           <button type="button" class="segbtn active" data-metric="hours">Outage-hours</button>
           <button type="button" class="segbtn" data-metric="count">Count</button>
-        </div>
-      </div>
-      <div class="heatgroup">
-        <span class="heatlbl">Quick</span>
-        <div class="seg" id="heatPresets" role="group" aria-label="Quick date range">
-          <button type="button" class="segbtn" data-days="7">7d</button>
-          <button type="button" class="segbtn" data-days="30">30d</button>
-          <button type="button" class="segbtn" data-days="90">90d</button>
-          <button type="button" class="segbtn" data-days="all">All</button>
         </div>
       </div>
       <div class="heatgroup">
@@ -210,8 +239,45 @@ function writeHash(){
 map.on("moveend zoomend overlayadd overlayremove baselayerchange", writeHash);
 
 L.control.zoom({ position:"topleft" }).addTo(map);
-L.control.attribution({ position:"bottomleft",
+const attribCtrl = L.control.attribution({ position:"bottomleft",
   prefix:'Outage data &copy; <a href="https://www.westernpower.com.au">Western Power</a>' }).addTo(map);
+// On mobile the attribution collapses behind an (i) badge (see CSS); tapping the
+// badge reveals the credits, tapping the empty area collapses it again. Tapping a
+// link (target is the <a>) is left alone so the links still work when expanded.
+{
+  const ac = attribCtrl.getContainer();
+  ac.classList.add("attrib-collapsible");
+  L.DomEvent.on(ac, "click", e => {
+    if (e.target === ac) { ac.classList.toggle("attrib-open"); syncBottomControls(); }
+  });
+}
+
+// Keep the bottom-right legend clear of the bottom-left attribution: if they
+// would overlap horizontally (narrow screens / a wide expanded attribution),
+// lift the legend by the attribution's height; otherwise drop it back down.
+// Runs on load, on resize, and whenever the attribution (i) is toggled.
+function syncBottomControls(){
+  const attr  = document.querySelector(".leaflet-bottom.leaflet-left");
+  const right = document.querySelector(".leaflet-bottom.leaflet-right");
+  if(!attr || !right) return;
+  right.style.marginBottom = "0";                 // measure the dropped-down position
+  const a = attr.getBoundingClientRect(), r = right.getBoundingClientRect();
+  const overlap = a.right > r.left && a.left < r.right;   // do their x-ranges intersect?
+  if(overlap) right.style.marginBottom = (a.height + 6) + "px";
+}
+
+// Push the top map controls (zoom top-left, layers + GitHub top-right) below the
+// top UI bar so they keep a CONSTANT gap from the bar's bottom edge — the bar's
+// height changes between time/heatmap modes and on resize, so this is re-run on
+// both. (Top-level so setMode() can call it on every mode switch.)
+function offsetTop(){
+  const bar = document.getElementById("controls");
+  if(!bar) return;
+  const m = (bar.offsetHeight + 20) + "px";
+  document.querySelectorAll(".leaflet-top.leaflet-left,.leaflet-top.leaflet-right")
+    .forEach(c => c.style.marginTop = m);
+}
+window.addEventListener("resize", syncBottomControls);
 
 // Overture buildings overlay (vector PMTiles, streamed by HTTP range requests).
 // protomaps-leaflet is a GridLayer (tile pane), so give it a pane ABOVE the
@@ -444,6 +510,9 @@ function setMode(m){
     if(temporal){ drawSpark(); setPlaying(true); }
     render();
   }
+  // the bar's height differs between modes — re-offset the map controls so they
+  // keep a constant gap from the bar, and re-stack the legend above attribution
+  offsetTop(); syncBottomControls();
   writeHash();
 }
 function removeHeat(){
@@ -631,13 +700,8 @@ function build(geo){
     if (urlState.has ? urlState.overlays.has("swis") : true){ swis.addTo(map); swis.bringToBack(); }
   }).catch(()=>{});
 
-  // Push the top controls (zoom top-left, layers top-right) below the top bar so
-  // they don't sit behind it. Re-measure on resize since the bar height changes.
-  const offsetTop = () => {
-    const m = (el("controls").offsetHeight + 20) + "px";
-    document.querySelectorAll(".leaflet-top.leaflet-left,.leaflet-top.leaflet-right")
-      .forEach(c => c.style.marginTop = m);
-  };
+  // Push the top controls below the bar now and after first paint (offsetTop and
+  // syncBottomControls are top-level; setMode also calls them on each mode switch).
   offsetTop(); requestAnimationFrame(offsetTop);
   window.addEventListener("resize", offsetTop);
 
@@ -658,6 +722,7 @@ function build(geo){
     return wrap;
   };
   legend.addTo(map);
+  syncBottomControls();   // lift the legend above the attribution
 
   setMode(urlState.has && urlState.mode ? urlState.mode : "heat");   // restore mode, else heatmap
   restoring = false;   // initial state applied — hash writes can begin
@@ -729,23 +794,8 @@ metricBtns.forEach(b => b.onclick = () => {
   if(heatActive) computeHeat();
 });
 
-// --- quick-range presets: fill the date pickers relative to the data domain ---
-const presetBtns = [...document.querySelectorAll("#heatPresets .segbtn")];
-const clearPresets = () => presetBtns.forEach(x => x.classList.remove("active"));
-presetBtns.forEach(b => b.onclick = () => {
-  const dmin = el("heatStart").min, dmax = el("heatEnd").max;
-  if(!dmin || !dmax) return;                         // data domain not known yet
-  const start = b.dataset.days==="all"
-    ? dmin
-    : (s => s < dmin ? dmin : s)(toDateInput(dateToMs(dmax,false) - Number(b.dataset.days)*86400000));
-  el("heatStart").value = start;
-  el("heatEnd").value   = dmax;
-  presetBtns.forEach(x => x.classList.toggle("active", x===b));
-  if(heatActive) computeHeat();
-});
-
-el("heatStart").onchange = () => { clearPresets(); if(heatActive) computeHeat(); };
-el("heatEnd").onchange   = () => { clearPresets(); if(heatActive) computeHeat(); };
+el("heatStart").onchange = () => { if(heatActive) computeHeat(); };
+el("heatEnd").onchange   = () => { if(heatActive) computeHeat(); };
 
 // hover readout over heat cells
 heatTip = L.tooltip({ sticky:true, direction:"top", offset:[0,-2] });
