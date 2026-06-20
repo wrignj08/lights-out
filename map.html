@@ -2,27 +2,45 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>WA Power Outage History</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>Lights Out — WA Power Outage History</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23f5c518' d='M13 2L4 14h6l-1 8l9-12h-6z'/%3E%3C/svg%3E" />
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
   :root { --bg:#eef2f6; --panel:#ffffff; --ink:#1a2230; --muted:#5b6b7c;
           --unplanned:#ff5a3c; --planned:#3b9dff; --accent:#0f9d77; --line:#d4dbe3;
-          --mapbg:#dfe5ec; --field:#ffffff; --btn:#eef2f6; --btn-hover:#e1e7ee; }
+          --mapbg:#dfe5ec; --field:#ffffff; --btn:#eef2f6; --btn-hover:#e1e7ee;
+          /* iOS: the map is drawn this much taller than the large viewport so its
+             tiles paint behind/around Safari's translucent URL bar with no gap.
+             0 on desktop; bumped on mobile (see the mobile media query). */
+          --mobile-browser-chrome-overscan:0px; }
   /* Auto dark mode — follows the OS/browser theme via prefers-color-scheme. */
   @media (prefers-color-scheme: dark) {
     :root { --bg:#0e151f; --panel:#19222e; --ink:#e6ecf3; --muted:#9fb0c2;
             --unplanned:#ff6b50; --planned:#4aa8ff; --accent:#1ec08f; --line:#2c3a4d;
             --mapbg:#0c1118; --field:#222d3d; --btn:#222d3d; --btn-hover:#2c3a4d; }
   }
-  html,body { margin:0; height:100%; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
-  #map { position:absolute; inset:0; background:var(--mapbg); }
+  html,body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  html { height:100%; }
+  /* 100lvh = the LARGE viewport (as if the URL bar is retracted), so the page
+     extends behind iOS Safari's translucent bottom bar instead of stopping above it. */
+  body { height:100lvh; overflow:hidden; overscroll-behavior:none; }
+  /* Map drawn taller than the viewport by the overscan so its tiles fill the
+     whole area under + around the URL bar (no blank strip). */
+  #map { position:absolute; top:0; left:0; width:100%;
+         height:calc(100lvh + var(--mobile-browser-chrome-overscan)); background:var(--mapbg); }
+  /* Leaflet anchors bottom controls to the (overscanned) map, so lift them back
+     above the URL-bar zone + home indicator. 100lvh-100dvh = the URL bar height
+     when shown, 0 when hidden; resolves to 0 on desktop. */
+  .leaflet-bottom { bottom:calc(var(--mobile-browser-chrome-overscan) + 100lvh - 100dvh + env(safe-area-inset-bottom, 0px)); }
   .panel { background:var(--panel); color:var(--ink); border:1px solid var(--line);
            border-radius:12px; box-shadow:0 6px 22px rgba(20,40,70,.18); }
   /* Top bar spans the width; all Leaflet controls live at the BOTTOM so nothing
      sits behind this bar (fixes the zoom-control overlap). */
-  #controls { position:absolute; z-index:1000; top:12px; left:12px; right:12px;
+  #controls { position:absolute; z-index:1000;
+              top:calc(12px + env(safe-area-inset-top, 0px));
+              left:calc(12px + env(safe-area-inset-left, 0px));
+              right:calc(12px + env(safe-area-inset-right, 0px));
               padding:10px 16px; display:flex; flex-direction:column; gap:8px; }
   #topline { display:flex; flex-wrap:wrap; align-items:center; gap:6px 18px; }
   #title { font-weight:700; font-size:15px; letter-spacing:.2px; }
@@ -109,7 +127,13 @@
          offsetTop() JS re-measures the bar height on resize, so a taller/variable
          bar pushes the map controls down correctly. ---- */
   @media (max-width: 600px) {
-    #controls { top:6px; left:6px; right:6px; padding:8px 11px; gap:6px; }
+    /* draw the map ~180px taller than the viewport so it fills behind iOS
+       Safari's URL bar (and the gap that opens as the bar collapses on scroll) */
+    :root { --mobile-browser-chrome-overscan:180px; }
+    #controls { top:calc(6px + env(safe-area-inset-top, 0px));
+                left:calc(6px + env(safe-area-inset-left, 0px));
+                right:calc(6px + env(safe-area-inset-right, 0px));
+                padding:8px 11px; gap:6px; }
     #title { font-size:13px; }
     /* stack the title/stat lines so changing playback numbers can't reflow the
        row and make the stats jump line-to-line; each sits on its own row */
@@ -151,13 +175,13 @@
 
 <div id="controls" class="panel">
   <div id="topline">
-    <span id="title">WA Power Outage History</span>
+    <span id="title">Lights Out</span>
     <span class="stat" id="lastScrape"></span>
     <span class="stat" id="src"></span>
     <!-- liveStats last: its numbers change while playing, so keep it at the end
          so nothing after it reflows -->
     <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers</span>
-    <span class="ver">v1.3</span>
+    <span class="ver">v1.4</span>
   </div>
   <div class="tabs">
     <button id="tabHeat" class="tab">Heatmap</button>
@@ -278,7 +302,9 @@ function syncBottomControls(){
 function offsetTop(){
   const bar = document.getElementById("controls");
   if(!bar) return;
-  const m = (bar.offsetHeight + 20) + "px";
+  // use the bar's actual bottom (in viewport coords) so the gap stays constant
+  // even when the bar is pushed down by env(safe-area-inset-top) on notched iOS
+  const m = (Math.round(bar.getBoundingClientRect().bottom) + 8) + "px";
   document.querySelectorAll(".leaflet-top.leaflet-left,.leaflet-top.leaflet-right")
     .forEach(c => c.style.marginTop = m);
 }

@@ -1,4 +1,4 @@
-# lights-out — WA power outage history
+# Lights Out — WA Power Outage History
 
 ### 🔦 **[Open the live map →](https://wrignj08.github.io/lights-out/)**
 
