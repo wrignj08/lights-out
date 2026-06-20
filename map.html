@@ -42,7 +42,9 @@
   .timecol { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
   #tlabel { font-size:12px; color:var(--ink); min-width:172px; text-align:right; font-variant-numeric:tabular-nums; }
   button#play { background:var(--btn); color:var(--ink); border:1px solid var(--line);
-                border-radius:8px; padding:5px 11px; font-size:13px; cursor:pointer; }
+                border-radius:8px; padding:5px 0; font-size:18px; line-height:1; cursor:pointer;
+                box-sizing:border-box; width:38px;
+                display:inline-flex; align-items:center; justify-content:center; }
   button#play:hover { background:var(--btn-hover); }
   /* range styled with a known 14px thumb so its 7px travel-inset is predictable */
   input[type=range]#slider { -webkit-appearance:none; appearance:none; width:100%; height:6px;
@@ -151,11 +153,11 @@
     <!-- liveStats last: its numbers change while playing, so keep it at the end
          so nothing after it reflows -->
     <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers @ <span id="tnow">—</span></span>
-    <span class="ver">v1.2</span>
+    <span class="ver">v1.3</span>
   </div>
   <div class="tabs">
-    <button id="tabTime" class="tab active">Time</button>
     <button id="tabHeat" class="tab">Heatmap</button>
+    <button id="tabTime" class="tab active">Time</button>
   </div>
   <div id="panelArea">
     <div class="timerow" id="panelTime">
@@ -169,7 +171,6 @@
     </div>
     <div class="heatrow" id="panelHeat" style="display:none">
       <div class="heatgroup">
-        <span class="heatlbl">Metric</span>
         <div class="seg" id="heatMetric" role="group" aria-label="Heatmap metric">
           <button type="button" class="segbtn active" data-metric="hours">Outage-hours</button>
           <button type="button" class="segbtn" data-metric="count">Count</button>
@@ -771,7 +772,7 @@ function startAutoRefresh(){
 el("slider").oninput = render;
 function setPlaying(on){
   playing = on;
-  el("play").textContent = playing ? "❚❚" : "▶";
+  el("play").textContent = playing ? "⏸" : "▶";
   clearInterval(playTimer);
   if (playing){
     playTimer = setInterval(()=>{
@@ -805,18 +806,28 @@ metricBtns.forEach(b => b.onclick = () => {
 el("heatStart").onchange = () => { if(heatActive) computeHeat(); };
 el("heatEnd").onchange   = () => { if(heatActive) computeHeat(); };
 
-// hover readout over heat cells
+// readout over heat cells: follows the cursor on desktop (hover), and stays put
+// on touch where a tap is the only "hover" you get.
 heatTip = L.tooltip({ sticky:true, direction:"top", offset:[0,-2] });
-map.on("mousemove", e=>{
-  if(!heatLayer || !map.hasLayer(heatLayer) || !gridMap){ return; }
-  const ix=Math.floor(e.latlng.lng/heatDLng), iy=Math.floor(e.latlng.lat/heatDLat);
+function showHeatTip(latlng){
+  if(!heatLayer || !map.hasLayer(heatLayer) || !gridMap){ return false; }
+  const ix=Math.floor(latlng.lng/heatDLng), iy=Math.floor(latlng.lat/heatDLat);
   const c=gridMap.get(ix+","+iy);
-  if(!c){ if(map.hasLayer(heatTip)) map.removeLayer(heatTip); return; }
-  heatTip.setLatLng(e.latlng).setContent(
+  if(!c){ if(map.hasLayer(heatTip)) map.removeLayer(heatTip); return false; }
+  heatTip.setLatLng(latlng).setContent(
     heatState.metric==="count" ? `${c.val} outage${c.val>1?"s":""}` : `${c.val.toFixed(1)} outage-hours`);
   if(!map.hasLayer(heatTip)) heatTip.addTo(map);
+  return true;
+}
+// Desktop hover. On touch a tap emits a synthetic mousemove that would flash the
+// tip and then vanish, so ignore mousemove there and rely on click instead.
+map.on("mousemove", e=>{ if(!L.Browser.touch) showHeatTip(e.latlng); });
+map.on("mouseout", ()=>{ if(!L.Browser.touch && heatTip && map.hasLayer(heatTip)) map.removeLayer(heatTip); });
+// Tap a cell to pin its readout; tap an empty area (or non-heat mode) to dismiss.
+map.on("click", e=>{
+  if(!heatLayer || !map.hasLayer(heatLayer) || !gridMap){ return; }
+  showHeatTip(e.latlng);   // showHeatTip removes the tip itself when the cell is empty
 });
-map.on("mouseout", ()=>{ if(heatTip && map.hasLayer(heatTip)) map.removeLayer(heatTip); });
 
 async function load(){
   for (const url of ["data/events.geojson","data/current.geojson"]){
