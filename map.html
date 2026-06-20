@@ -151,7 +151,7 @@
     <!-- liveStats last: its numbers change while playing, so keep it at the end
          so nothing after it reflows -->
     <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers @ <span id="tnow">—</span></span>
-    <span class="ver">v1.1</span>
+    <span class="ver">v1.2</span>
   </div>
   <div class="tabs">
     <button id="tabTime" class="tab active">Time</button>
@@ -645,8 +645,16 @@ function applyData(geo, firstTime){
   // time domain from active windows (includes future planned works)
   const starts = feats.map(F.aStart).filter(v=>v!=null);
   const ends   = feats.map(F.aEnd).filter(v=>v!=null);
+  const seen   = feats.map(F.first).filter(v=>v!=null);   // when each outage was first observed
   if (starts.length){
-    temporal=true; tMin=Math.min(...starts); tMax=Math.max(...ends, ...starts);
+    temporal=true;
+    // The dataset only has information from the first snapshot onward, so don't let
+    // a few stale records' pre-observation reported starts drag the timeline back
+    // (e.g. a "likely_stuck" outage reported May 31 but first seen June 9). Floor
+    // tMin at the earliest observation time.
+    const obsStart = seen.length ? Math.min(...seen) : Math.min(...starts);
+    tMin = Math.max(Math.min(...starts), obsStart);
+    tMax = Math.max(...ends, ...starts);
     if (tMax>tMin){
       if (firstTime) el("slider").value = 0;   // start at the beginning of the dataset
       buildSeries(); drawSpark();
