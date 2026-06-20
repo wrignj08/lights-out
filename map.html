@@ -36,7 +36,9 @@
   #panelArea > div { width:100%; }
   .stat { font-size:13px; color:var(--muted); }
   .stat b { color:var(--ink); font-variant-numeric:tabular-nums; }
-  #tnow { color:var(--accent); font-weight:600; }
+  /* the min-width is set from the dataset's peak values in buildSeries() so the
+     line doesn't reflow as the live counters tick during playback */
+  #n, #cust { display:inline-block; text-align:right; }
   .timerow { display:flex; align-items:center; gap:10px; }
   /* slider + sparkline stacked in one column so they share the exact width */
   .timecol { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
@@ -114,7 +116,9 @@
     #topline { flex-direction:column; align-items:flex-start; gap:2px; }
     .stat { font-size:11px; }
     #liveStats { white-space:nowrap; }
-    .ver { display:none; }                 /* version chip is non-essential on a phone */
+    /* column layout kills the margin-left:auto, so pin the version to the
+       panel's top-right corner where it lines up with the title row */
+    .ver { position:absolute; top:8px; right:11px; margin:0; }
     /* let the time/heat panels grow with their content instead of clipping at 66px */
     #panelArea { height:auto; min-height:46px; }
     /* time row: play + label share line 1, slider/spark span the full width below */
@@ -152,7 +156,7 @@
     <span class="stat" id="src"></span>
     <!-- liveStats last: its numbers change while playing, so keep it at the end
          so nothing after it reflows -->
-    <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers @ <span id="tnow">—</span></span>
+    <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers</span>
     <span class="ver">v1.3</span>
   </div>
   <div class="tabs">
@@ -575,7 +579,7 @@ function render(){
   });
   el("n").textContent = n.toLocaleString();
   el("cust").textContent = cust.toLocaleString();
-  if (t!=null){ el("tnow").textContent = fmt(t); el("tlabel").textContent = fmt(t); }
+  if (t!=null){ el("tlabel").textContent = fmt(t); }
   drawCursor();
 }
 
@@ -585,13 +589,19 @@ function buildSeries(){
   const items = feats.map(p => [F.aStart(p), F.aEnd(p), F.cust(p)])
                      .filter(([a,b]) => a!=null);
   series = [];
+  let peakN = 0;
   for (let i=0;i<S;i++){
     const t = tMin + (tMax-tMin)*i/(S-1);
-    let c=0;
-    for (const [a,b,cust] of items){ const bb=(b==null||b<a)?a:b; if (a-TOL<=t && t<=bb+TOL) c+=cust; }
+    let c=0, n=0;
+    for (const [a,b,cust] of items){ const bb=(b==null||b<a)?a:b; if (a-TOL<=t && t<=bb+TOL){ c+=cust; n++; } }
     series.push(c);
+    if (n>peakN) peakN = n;
   }
   sMax = Math.max(1, ...series);
+  // reserve each live counter's width for the dataset's peak value so the line
+  // doesn't reflow as the numbers tick during playback
+  el("n").style.minWidth    = `${peakN.toLocaleString().length}ch`;
+  el("cust").style.minWidth = `${sMax.toLocaleString().length}ch`;
 }
 // PAD_X = half the 14px slider thumb. The thumb centre travels [PAD_X, W-PAD_X],
 // so we plot the sparkline and cursor over the same range to line them up.
