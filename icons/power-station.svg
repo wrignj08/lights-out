@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <!-- Power station: same rounded tile + bolt as a substation, but yellow.
+       Rendered a touch larger than substations. Fixed size for every site. -->
+  <rect x="3" y="3" width="18" height="18" rx="4.5"
+        fill="#f5c518" stroke="#0d1117" stroke-width="1.6" paint-order="stroke"/>
+  <path d="M13.4 5.4 L7.4 13.3 h3.5 l-1.6 5.3 6.3-7.9 h-3.6 z"
+        fill="#ffffff" stroke="#0d1117" stroke-width="0.5" stroke-linejoin="round"/>
+</svg>

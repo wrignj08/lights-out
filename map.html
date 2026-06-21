@@ -79,9 +79,11 @@
              border-top:1px solid var(--line); padding-top:8px; }
   .heatgroup { display:flex; align-items:center; gap:7px; }
   .heatlbl { font-size:10px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--muted); }
-  .heatrow input[type=date] {
+  .heatrow input[type=date], .daterange input[type=date] {
              font-size:12px; padding:3px 6px; border:1px solid var(--line); border-radius:6px;
              background:var(--field); color:var(--ink); font-family:inherit; }
+  /* tabs + the shared date range share one row (range serves both modes) */
+  .tabsrow { display:flex; align-items:center; flex-wrap:wrap; gap:8px 14px; }
   .heatarrow { color:var(--muted); }
   /* segmented control (shared by the metric toggle + quick-range presets) */
   .seg { display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
@@ -90,15 +92,21 @@
   .segbtn:first-child { border-left:none; }
   .segbtn:hover { background:var(--btn); color:var(--ink); }
   .segbtn.active { background:var(--accent); color:#fff; }
-  #heatInfo { margin-left:auto; color:var(--ink); font-weight:600; }
-  #heatInfo { font-variant-numeric:tabular-nums; }
+  /* power-network SVG markers (divIcon) — drop Leaflet's default white box */
+  .power-icon { background:none; border:none; }
+  .power-icon svg { display:block; width:100%; height:100%;
+    filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.55)); }
+  .legend-ico { display:inline-block; width:15px; height:15px; margin-right:5px; vertical-align:-3px; }
+
   /* legend + layers (bottom-right Leaflet controls) */
   .legendbox { padding:8px 11px; font-size:12px; line-height:1.7; }
   .legendbox .swatch { display:inline-block; width:11px; height:11px; border-radius:3px; margin-right:7px; vertical-align:-1px; }
-  .legendbox + .legendbox { margin-top:6px; }
+  /* one box, many sections: a section gets a top divider only when another
+     visible section sits above it (toggled by refreshLegend) */
+  .legsec.divided { border-top:1px solid var(--line); margin-top:7px; padding-top:7px; }
   .heatLegTitle { font-weight:600; margin-bottom:3px; }
   .grad { width:150px; height:10px; border-radius:3px;
-          background:linear-gradient(to right, rgb(255,255,178), rgb(253,141,60), rgb(189,0,38)); }
+          background:linear-gradient(to right, rgb(38,198,218), rgb(102,187,106), rgb(255,235,59), rgb(255,152,0), rgb(244,67,54), rgb(233,30,99)); }
   .gradlabels { display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-top:2px; }
   .leaflet-control-layers { background:var(--panel)!important; color:var(--ink); border:1px solid var(--line)!important; border-radius:12px!important; }
   .leaflet-control-layers-expanded { padding:8px 10px!important; }
@@ -157,8 +165,7 @@
        columns (1fr) either side of the arrow. min-width:0 lets the native date
        inputs shrink below their content instead of overflowing the row. */
     .heatgroup:has(input[type=date]) { display:grid; grid-template-columns:auto 1fr auto 1fr; gap:7px; }
-    .heatrow input[type=date] { min-width:0; }
-    #heatInfo { margin-left:0; }
+    .heatrow input[type=date], .daterange input[type=date] { min-width:0; }
     /* attribution: collapse behind an (i) badge so it doesn't eat two rows at the
        bottom of a phone. Tap the (i) to reveal the full credits (.attrib-open). */
     .leaflet-control-attribution.attrib-collapsible:not(.attrib-open) { font-size:0; padding:0; }
@@ -181,11 +188,21 @@
     <!-- liveStats last: its numbers change while playing, so keep it at the end
          so nothing after it reflows -->
     <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers</span>
-    <span class="ver">v1.4</span>
+    <span class="ver">v1.5</span>
   </div>
-  <div class="tabs">
-    <button id="tabHeat" class="tab">Heatmap</button>
-    <button id="tabTime" class="tab active">Time</button>
+  <div class="tabsrow">
+    <div class="tabs">
+      <button id="tabHeat" class="tab">Heatmap</button>
+      <button id="tabTime" class="tab active">Time</button>
+    </div>
+    <!-- one date window, shared by Time + Heatmap; sits beside the tabs so it
+         stays visible and in the same place in both modes -->
+    <div class="heatgroup daterange">
+      <span class="heatlbl">Range</span>
+      <input type="date" id="heatStart" />
+      <span class="heatarrow">→</span>
+      <input type="date" id="heatEnd" />
+    </div>
   </div>
   <div id="panelArea">
     <div class="timerow" id="panelTime">
@@ -204,13 +221,6 @@
           <button type="button" class="segbtn" data-metric="count">Count</button>
         </div>
       </div>
-      <div class="heatgroup">
-        <span class="heatlbl">Range</span>
-        <input type="date" id="heatStart" />
-        <span class="heatarrow">→</span>
-        <input type="date" id="heatEnd" />
-      </div>
-      <span id="heatInfo" class="stat"></span>
     </div>
   </div>
 </div>
@@ -295,6 +305,20 @@ function syncBottomControls(){
   if(overlap) right.style.marginBottom = (a.height + 6) + "px";
 }
 
+// The bottom-right legend is one box with several .legsec parts that show/hide
+// with the mode and the GA layer toggles. Draw a divider above each visible
+// section that has another visible section above it, then re-stack the box.
+function refreshLegend(){
+  if(!legendBoxEl) return;
+  let prevVisible = false;
+  for(const sec of legendBoxEl.querySelectorAll(".legsec")){
+    const vis = sec.style.display !== "none" && sec.innerHTML.trim() !== "";
+    sec.classList.toggle("divided", vis && prevVisible);
+    if(vis) prevVisible = true;
+  }
+  syncBottomControls();
+}
+
 // Push the top map controls (zoom top-left, layers + GitHub top-right) below the
 // top UI bar so they keep a CONSTANT gap from the bar's bottom edge — the bar's
 // height changes between time/heatmap modes and on resize, so this is re-run on
@@ -331,6 +355,132 @@ try {
   });
 } catch (e) { console.warn("Overture layer unavailable:", e); }
 if (buildings) overlayLayers["buildings"] = buildings;
+
+// ---------- GA National Electricity Infrastructure overlay ----------
+// WA transmission lines + substations + major power stations, pulled from
+// Geoscience Australia's ArcGIS REST service as GeoJSON and styled client-side
+// (so the voltage ramp + status rules below are fully ours). Each WA layer is
+// well under the service's 2000-record cap, so a single STATE-filtered request
+// per layer is enough — no paging. Lazy-loaded on first activation.
+map.createPane("powerPane");
+// Sit ABOVE the outage overlay (400). The map uses preferCanvas, so the outage
+// layer is one full-viewport <canvas> in the overlayPane — if powerPane were
+// below it that canvas would swallow every click before it reached the markers.
+map.getPane("powerPane").style.zIndex = 450;   // above outages(400), below shadow(500)/markers(600)
+const powerRenderer = L.canvas({ pane:"powerPane" });   // dedicated canvas so the lines draw + stay clickable in this pane
+// Points (substations + stations) live in their OWN pane just above the lines
+// pane, so they always render on top of the transmission lines.
+map.createPane("powerPtsPane");
+map.getPane("powerPtsPane").style.zIndex = 460;
+const powerPtsRenderer = L.canvas({ pane:"powerPtsPane" });   // for the circle-marker fallbacks
+
+const GA_BASE = "https://services.ga.gov.au/gis/rest/services/National_Electricity_Infrastructure/MapServer";
+const gaUrl = (layer, fields) =>
+  `${GA_BASE}/${layer}/query?where=${encodeURIComponent("STATE='Western Australia'")}` +
+  `&outFields=${fields}&outSR=4326&f=geojson`;
+const GA_ATTRIB = 'Power network &copy; <a href="https://www.ga.gov.au">Geoscience Australia</a>';
+
+// kV -> colour ramp, shared by lines (CAPACITYKV) and substations (VOLTAGEKV)
+const kvColor = kv =>
+  kv >= 330 ? "#e4572e" :   // 330/500 kV — bulk transmission
+  kv >= 220 ? "#f3a712" :   // 220/275 kV
+  kv >= 132 ? "#ffd23f" :   // 132 kV
+  kv >= 66  ? "#3fb950" :   // 66/88/110 kV — sub-transmission
+  kv >   0  ? "#5b9bd5" :   // 11/22/33/44 kV — distribution
+              "#8b98a5";    // unknown
+const norm = s => (s || "").trim();
+// NOTE: ArcGIS f=geojson output lowercases all field names, so properties are
+// read as p.capacitykv / p.operationalstatus etc. (not the uppercase REST names).
+const isOperational = p => norm(p.operationalstatus).toLowerCase() === "operational";
+const gaEsc = s => String(s ?? "").replace(/[&<>]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;" }[c]));
+const powerRow = (k, v) => `<div><span style="color:var(--muted)">${k}:</span> ${v}</div>`;
+
+// Custom SVG marker files (icons/), fetched once on first activation. The
+// substation icon carries a __FILL__ token recoloured per voltage; the power
+// station icon is sized by generation capacity. If the files haven't loaded yet
+// (or the fetch failed) the points fall back to plain circle markers.
+let subSvg = null, staSvg = null;
+// Substations are drawn in a single colour — we don't differentiate by voltage.
+const SUB_FILL = "#3fb950";
+const subIcon = () => L.divIcon({ className:"power-icon",
+  html: subSvg.replace(/__FILL__/g, SUB_FILL),
+  iconSize:[19,19], iconAnchor:[9.5,9.5], popupAnchor:[0,-8] });
+const staIcon = () => L.divIcon({ className:"power-icon", html: staSvg,
+  iconSize:[26,26], iconAnchor:[13,13], popupAnchor:[0,-12] });
+
+const powerLines = L.geoJSON(null, {
+  pane: "powerPane", renderer: powerRenderer, attribution: GA_ATTRIB,
+  style: f => {
+    const kv = f.properties.capacitykv, op = isOperational(f.properties);
+    return { color:kvColor(kv), weight: kv>=220?2.6 : kv>=132?2 : 1.4,
+             opacity: op?0.9:0.5, dashArray: op?null:"4 4", lineCap:"round" };
+  },
+  onEachFeature: (f, l) => l.bindPopup(
+    `<b>${gaEsc(norm(f.properties.name)) || "Transmission line"}</b>`
+    + powerRow("Capacity", f.properties.capacitykv ? `${f.properties.capacitykv} kV` : "—")
+    + powerRow("Class", gaEsc(norm(f.properties.class)) || "—")
+    + powerRow("Status", gaEsc(norm(f.properties.operationalstatus)) || "—")),
+});
+const substations = L.geoJSON(null, {
+  pane: "powerPane",
+  pointToLayer: (f, ll) => subSvg
+    ? L.marker(ll, { pane:"powerPtsPane", icon:subIcon(), keyboard:false })
+    : L.circleMarker(ll, { pane:"powerPtsPane", renderer:powerPtsRenderer, radius:3.6, weight:1,
+        color:"#0d1117", fillColor:SUB_FILL, fillOpacity:0.95 }),
+  onEachFeature: (f, l) => l.bindPopup(
+    `<b>${gaEsc(norm(f.properties.name)) || "Substation"}</b>`
+    + powerRow("Voltage", f.properties.voltagekv ? `${f.properties.voltagekv} kV` : "—")
+    + powerRow("Class", gaEsc(norm(f.properties.class)) || "—")
+    + powerRow("Locality", gaEsc(norm(f.properties.locality)) || "—")
+    + powerRow("Status", gaEsc(norm(f.properties.operationalstatus)) || "—")),
+});
+const powerStations = L.geoJSON(null, {
+  pane: "powerPane",
+  pointToLayer: (f, ll) => staSvg
+    ? L.marker(ll, { pane:"powerPtsPane", icon:staIcon(), keyboard:false })
+    : L.circleMarker(ll, { pane:"powerPtsPane", renderer:powerPtsRenderer, radius:6, weight:1.2,
+        color:"#0d1117", fillColor:"#f5c518", fillOpacity:0.9 }),
+  onEachFeature: (f, l) => { const mw = Number(f.properties.generationmw); l.bindPopup(
+    `<b>${gaEsc(norm(f.properties.name)) || "Power station"}</b>`
+    + powerRow("Capacity", isFinite(mw) && mw>0 ? `${mw.toLocaleString()} MW` : "—")
+    + powerRow("Generation", gaEsc(norm(f.properties.generationtype)) || "—")
+    + powerRow("Fuel", gaEsc(norm(f.properties.primaryfueltype)) || "—")
+    + powerRow("Owner", gaEsc(norm(f.properties.owner)) || "—")
+    + powerRow("Locality", gaEsc(norm(f.properties.locality)) || "—")); },
+});
+
+// Three independent overlays (each toggled + URL-persisted on its own).
+overlayLayers["lines"]    = powerLines;
+overlayLayers["subs"]     = substations;
+overlayLayers["stations"] = powerStations;
+
+// Marker SVGs are fetched once and shared by the substation + station layers.
+// Bump ICON_VER whenever an icon file changes — the ?v= busts the browser cache
+// (otherwise an updated icon would never reach a returning visitor).
+const ICON_VER = "5";
+let iconsPromise = null;
+function ensureIcons(){
+  if (!iconsPromise){
+    const t = u => fetch(`${u}?v=${ICON_VER}`, {cache:"reload"}).then(r => r.ok ? r.text() : null).catch(() => null);
+    iconsPromise = Promise.all([ t("icons/substation.svg"), t("icons/power-station.svg") ])
+      .then(([s, p]) => { subSvg = s; staSvg = p; });
+  }
+  return iconsPromise;
+}
+const fetchLayer = (layer, fields, target) => fetch(gaUrl(layer, fields), {cache:"force-cache"})
+  .then(r => r.ok ? r.json() : null)
+  .then(g => { if (g && g.features) target.addData(g); })
+  .catch(e => console.warn("GA power layer unavailable:", e));
+// Lazy-load each layer's data the first time it is switched on. The point
+// layers load their icons first so pointToLayer can use them (icons failing
+// just falls back to circle markers, so the data loads either way).
+const onceOnAdd = (layer, fn) => layer.on("add", function h(){ layer.off("add", h); fn(); });
+onceOnAdd(powerLines, () =>
+  fetchLayer(2, "NAME,CAPACITYKV,OPERATIONALSTATUS,CLASS,FEATURETYPE", powerLines));
+onceOnAdd(substations, () => ensureIcons().finally(() =>
+  fetchLayer(0, "NAME,VOLTAGEKV,OPERATIONALSTATUS,CLASS,LOCALITY", substations)));
+onceOnAdd(powerStations, () => ensureIcons().finally(() =>
+  fetchLayer(1, "NAME,GENERATIONMW,GENERATIONTYPE,PRIMARYFUELTYPE,OWNER,OPERATIONALSTATUS,LOCALITY", powerStations)));
 
 // ---------- field accessors (events.geojson OR live current.geojson) ----------
 const F = {
@@ -383,7 +533,7 @@ let outageLayer, feats=[], tMin=null, tMax=null, temporal=false;
 let series=[], sMax=1, playing=false, playTimer=null;
 let heatFeatures=[], heatLayer=null, gridMap=null, heatTip=null;
 let heatState=null, heatCells=null, heatMax=1, heatDLat=0, heatDLng=0;
-let polyLegendEl=null, heatLegendEl=null;
+let polyLegendEl=null, heatLegendEl=null, legendBoxEl=null;
 const TOL = 5*60*1000;
 
 // ---------- adaptive grid heatmap (cells scale with zoom: 10km -> 50m) ----------
@@ -396,10 +546,10 @@ function pointInPolygon(x,y,ring){
   }
   return inside;
 }
-function heatRGBA(t,a){ // 0..1 -> yellow -> orange -> red
-  const s=[[255,255,178],[253,141,60],[189,0,38]];
-  const [c0,c1,f] = t<=0.5 ? [s[0],s[1],t/0.5] : [s[1],s[2],(t-0.5)/0.5];
-  const m=i=>Math.round(c0[i]+(c1[i]-c0[i])*f);
+function heatRGBA(t,a){ // 0..1 -> teal -> green -> yellow -> orange -> red -> magenta
+  const s=[[38,198,218],[102,187,106],[255,235,59],[255,152,0],[244,67,54],[233,30,99]];
+  const n=s.length-1, x=Math.max(0,Math.min(1,t))*n, i=Math.min(n-1,Math.floor(x)), f=x-i;
+  const c0=s[i], c1=s[i+1], m=j=>Math.round(c0[j]+(c1[j]-c0[j])*f);
   return `rgba(${m(0)},${m(1)},${m(2)},${a})`;
 }
 // date-only <input type="date"> helpers (local dates; end date is inclusive)
@@ -409,14 +559,15 @@ function dateToMs(val, endOfDay){ if(!val) return NaN; const [y,m,d]=val.split("
 // cell size (km) by zoom; fixed reference latitude keeps the grid stable on pan
 const HLAT = -32;
 function cellKmForZoom(z){
-  if(z<=8) return 10;
-  if(z===9) return 5;
-  if(z===10) return 2;
-  if(z===11) return 1;
-  if(z===12) return 0.5;
-  if(z===13) return 0.25;
-  if(z===14) return 0.1;
-  return 0.05;            // z >= 15 -> 50m
+  // 10x higher-res blocks (linear cell size / sqrt(10) => ~10x as many cells per area)
+  if(z<=8) return 3.16;
+  if(z===9) return 1.58;
+  if(z===10) return 0.632;
+  if(z===11) return 0.316;
+  if(z===12) return 0.158;
+  if(z===13) return 0.079;
+  if(z===14) return 0.0316;
+  return 0.0158;          // z >= 15 -> ~16m
 }
 
 // Full-viewport canvas overlay: re-bins only the visible area at the current
@@ -466,15 +617,15 @@ const HeatLayer = L.Layer.extend({
   }
 });
 
-function recomputeHeat(){
-  if(!heatState){ heatCells=null; return; }
-  const {a,b,metric}=heatState;
-  const km=cellKmForZoom(map.getZoom());
-  heatDLat = km/110.574;
-  heatDLng = km/(111.320*Math.cos(HLAT*Math.PI/180));
-  const vb=map.getBounds().pad(0.15);     // only bin cells in (slightly padded) view
-  const VX0=Math.floor(vb.getWest()/heatDLng),  VX1=Math.floor(vb.getEast()/heatDLng);
-  const VY0=Math.floor(vb.getSouth()/heatDLat), VY1=Math.floor(vb.getNorth()/heatDLat);
+// Bin features into a grid of cells sized by (dLat,dLng). `bounds` (optional)
+// restricts binning to cells overlapping that area; pass null to bin the whole
+// dataset. Returns a Map keyed "ix,iy" of {ix,iy,val}.
+function binHeat(a,b,metric,dLat,dLng,bounds){
+  let VX0=-Infinity,VX1=Infinity,VY0=-Infinity,VY1=Infinity;
+  if(bounds){
+    VX0=Math.floor(bounds.getWest()/dLng);  VX1=Math.floor(bounds.getEast()/dLng);
+    VY0=Math.floor(bounds.getSouth()/dLat); VY1=Math.floor(bounds.getNorth()/dLat);
+  }
   const grid=new Map();
   const bump=(ix,iy,w)=>{ const k=ix+","+iy,c=grid.get(k); if(c)c.val+=w; else grid.set(k,{ix,iy,val:w}); };
   for(const f of heatFeatures){
@@ -485,21 +636,50 @@ function recomputeHeat(){
     const ring=ring0(f.geometry);
     let mnX=Infinity,mnY=Infinity,mxX=-Infinity,mxY=-Infinity,cx=0,cy=0;
     for(const [lng,lat] of ring){ if(lng<mnX)mnX=lng;if(lng>mxX)mxX=lng;if(lat<mnY)mnY=lat;if(lat>mxY)mxY=lat;cx+=lng;cy+=lat; }
-    const ix0=Math.max(VX0,Math.floor(mnX/heatDLng)), ix1=Math.min(VX1,Math.floor(mxX/heatDLng));
-    const iy0=Math.max(VY0,Math.floor(mnY/heatDLat)), iy1=Math.min(VY1,Math.floor(mxY/heatDLat));
+    const ix0=Math.max(VX0,Math.floor(mnX/dLng)), ix1=Math.min(VX1,Math.floor(mxX/dLng));
+    const iy0=Math.max(VY0,Math.floor(mnY/dLat)), iy1=Math.min(VY1,Math.floor(mxY/dLat));
     let any=false;
     for(let ix=ix0;ix<=ix1;ix++) for(let iy=iy0;iy<=iy1;iy++)
-      if(pointInPolygon((ix+0.5)*heatDLng,(iy+0.5)*heatDLat,ring)){ bump(ix,iy,w); any=true; }
-    if(!any){   // polygon smaller than a cell -> its centroid cell (if in view)
-      const gx=Math.floor((cx/ring.length)/heatDLng), gy=Math.floor((cy/ring.length)/heatDLat);
+      if(pointInPolygon((ix+0.5)*dLng,(iy+0.5)*dLat,ring)){ bump(ix,iy,w); any=true; }
+    if(!any){   // polygon smaller than a cell -> its centroid cell (if in bounds)
+      const gx=Math.floor((cx/ring.length)/dLng), gy=Math.floor((cy/ring.length)/dLat);
       if(gx>=VX0&&gx<=VX1&&gy>=VY0&&gy<=VY1) bump(gx,gy,w);
     }
   }
-  gridMap=grid; heatCells=[...grid.values()];
-  let mx=0; for(const c of heatCells) if(c.val>mx) mx=c.val; heatMax=Math.max(1,mx);
-  el("heatInfo").textContent = heatState
-    ? `${heatState.nOut.toLocaleString()} outage${heatState.nOut===1?"":"s"} · ${Math.round(heatState.totalH).toLocaleString()} outage-hours`
-    : "";
+  return grid;
+}
+
+// Static color-scale max for a given cell size: the peak per-cell value across
+// the WHOLE dataset (not the viewport). Computed once per cell size + window +
+// metric and cached on heatState, so panning never rescales the colors — the
+// max only changes when the zoom's cell size (or the heat settings) changes.
+// Scanning the whole dataset at a deep-zoom cell size is catastrophic: a single
+// state-wide polygon spans millions of 50m cells, each point-in-polygon tested.
+// But the peak per-cell value barely changes once cells get smaller than the
+// outage polygons themselves (a cell's value ≈ how many polygons overlap that
+// point — a property of location, not cell size). So we never scan finer than
+// HEAT_MAX_SCAN_KM and reuse that result for every deeper zoom. Coarse zooms,
+// where small polygons merge into one cell and the max genuinely rises, still
+// get their own exact value.
+const HEAT_MAX_SCAN_KM = 2;
+function staticHeatMax(km){
+  const {a,b,metric,maxCache}=heatState;
+  const sk=Math.max(km,HEAT_MAX_SCAN_KM);     // floor the scan resolution
+  if(maxCache.has(sk)) return maxCache.get(sk);
+  const dLat=sk/110.574, dLng=sk/(111.320*Math.cos(HLAT*Math.PI/180));
+  let mx=0; for(const c of binHeat(a,b,metric,dLat,dLng,null).values()) if(c.val>mx) mx=c.val;
+  const v=Math.max(1,mx); maxCache.set(sk,v); return v;
+}
+
+function recomputeHeat(){
+  if(!heatState){ heatCells=null; return; }
+  const {a,b,metric}=heatState;
+  const km=cellKmForZoom(map.getZoom());
+  heatDLat = km/110.574;
+  heatDLng = km/(111.320*Math.cos(HLAT*Math.PI/180));
+  const vb=map.getBounds().pad(0.15);     // only bin cells in (slightly padded) view
+  gridMap=binHeat(a,b,metric,heatDLat,heatDLng,vb); heatCells=[...gridMap.values()];
+  heatMax=staticHeatMax(km);              // static scale from the full dataset, not the view
   if(heatLegendEl){
     el("heatLegTitle").textContent = metric==="count" ? "Outages per cell" : "Outage-hours per cell";
     el("heatLegMax").textContent = metric==="count" ? Math.round(heatMax) : `${Math.round(heatMax)}h`;
@@ -512,7 +692,8 @@ function drawHeat(ctx){
   for(const c of heatCells){
     const tl=map.latLngToContainerPoint([(c.iy+1)*heatDLat, c.ix*heatDLng]);
     const br=map.latLngToContainerPoint([c.iy*heatDLat, (c.ix+1)*heatDLng]);
-    const t=c.val/heatMax;
+    // log-normalize so a few outlier cells don't crush everything else to the low end
+    const t=Math.log1p(c.val)/Math.log1p(heatMax);
     ctx.fillStyle=heatRGBA(t, 0.25+0.55*t);
     ctx.fillRect(tl.x, tl.y, Math.ceil(br.x-tl.x)+1, Math.ceil(br.y-tl.y)+1);   // +1 avoids seams
   }
@@ -536,34 +717,33 @@ function setMode(m){
   if(polyLegendEl) polyLegendEl.style.display = heatActive ? "none" : "";
   if(heatLegendEl) heatLegendEl.style.display = heatActive ? "" : "none";
   if(heatActive){ setPlaying(false); computeHeat(); }
-  else {   // entering the timeline: redraw the sparkline now the panel is visible
+  else {   // entering the timeline: rebuild for the current date range, then redraw
     removeHeat();
-    if(temporal){ drawSpark(); setPlaying(true); }
+    if(temporal){ buildSeries(); drawSpark(); setPlaying(true); }
     render();
   }
   // the bar's height differs between modes — re-offset the map controls so they
-  // keep a constant gap from the bar, and re-stack the legend above attribution
-  offsetTop(); syncBottomControls();
+  // keep a constant gap from the bar, and re-flow the legend (dividers + stack)
+  offsetTop(); refreshLegend();
   writeHash();
 }
 function removeHeat(){
   if(heatLayer && map.hasLayer(heatLayer)) map.removeLayer(heatLayer);
-  heatState=null; gridMap=null; el("heatInfo").textContent="";
+  heatState=null; gridMap=null;
 }
 function computeHeat(){            // (re)build the heatmap from the current heat settings
   const a=dateToMs(el("heatStart").value,false), b=dateToMs(el("heatEnd").value,true);
-  if(isNaN(a)||isNaN(b)||b<=a){ removeHeat(); el("heatInfo").textContent="set a valid start → end"; return; }
+  if(isNaN(a)||isNaN(b)||b<=a){ removeHeat(); return; }
   const metric=currentMetric();
-  let nOut=0, totalH=0;                              // window totals (grid-independent)
+  let nOut=0;                                        // outages overlapping the window
   for(const f of heatFeatures){
     const p=f.properties; let s=F.aStart(p), e=F.aEnd(p);
     if(s==null) continue; if(e==null||e<s) e=s;
     const ov=Math.max(0, Math.min(b,e)-Math.max(a,s)); if(ov<=0) continue;
-    nOut++; totalH+=ov/3600000;
+    nOut++;
   }
-  if(!nOut){ removeHeat(); el("heatInfo").textContent="no outages in range"; return; }
-  heatState = { a, b, metric, nOut, totalH,
-    summary: metric==="count" ? `${nOut} in window` : `${Math.round(totalH).toLocaleString()} outage-hours` };
+  if(!nOut){ removeHeat(); return; }   // nothing in range — clear the layer
+  heatState = { a, b, metric, maxCache: new Map() };
   if(!heatLayer) heatLayer=new HeatLayer();
   if(!map.hasLayer(heatLayer)) heatLayer.addTo(map); else heatLayer._reset();
 }
@@ -574,7 +754,13 @@ function activeAt(p, t){
   if (b==null || b<a) b=a;
   return a-TOL <= t && t <= b+TOL;
 }
-function curT(){ return tMin==null ? null : tMin + (tMax-tMin) * (el("slider").value/1000); }
+// The timeline shares the heatmap's date range: the slider + sparkline span
+// [heatStart, heatEnd], falling back to the full data domain if it's unset/invalid.
+function winRange(){
+  const a=dateToMs(el("heatStart").value,false), b=dateToMs(el("heatEnd").value,true);
+  return (!isNaN(a) && !isNaN(b) && b>a) ? [a,b] : [tMin,tMax];
+}
+function curT(){ if(tMin==null) return null; const [a,b]=winRange(); return a + (b-a) * (el("slider").value/1000); }
 
 const fmt = t => new Date(t).toLocaleString([], {day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
 
@@ -616,8 +802,9 @@ function buildSeries(){
                      .filter(([a,b]) => a!=null);
   series = [];
   let peakN = 0;
+  const [wa,wb] = winRange();   // span the shared heatmap date range
   for (let i=0;i<S;i++){
-    const t = tMin + (tMax-tMin)*i/(S-1);
+    const t = wa + (wb-wa)*i/(S-1);
     let c=0, n=0;
     for (const [a,b,cust] of items){ const bb=(b==null||b<a)?a:b; if (a-TOL<=t && t<=bb+TOL){ c+=cust; n++; } }
     series.push(c);
@@ -696,11 +883,11 @@ function applyData(geo, firstTime){
       if (firstTime) el("slider").value = 0;   // start at the beginning of the dataset
       buildSeries(); drawSpark();
       requestAnimationFrame(drawSpark);
-      // bound the pickers to the data domain so you can't go before/after the data
+      // bound the shared picker to the data domain so you can't go before/after the data
       const dmin = toDateInput(tMin), dmax = toDateInput(tMax);
       el("heatStart").min = el("heatEnd").min = dmin;
       el("heatStart").max = el("heatEnd").max = dmax;
-      if (firstTime){   // default the heatmap window to the full domain (keep a user's choice on refresh)
+      if (firstTime){   // default the window to the full domain (keep a user's choice on refresh)
         el("heatStart").value = dmin;
         el("heatEnd").value   = dmax;
       }
@@ -716,11 +903,20 @@ function build(geo){
   // layers control + legend (bottom-right), created now that outageLayer exists
   const overlays = {};
   if (buildings) overlays["Buildings (Overture)"] = buildings;
+  overlays["Transmission lines (GA)"] = powerLines;
+  overlays["Substations (GA)"]        = substations;
+  overlays["Power stations (GA)"]     = powerStations;
   const layersCtrl = L.control.layers({ "Street":light, "Satellite (Esri)":esri }, overlays,
                    { position:"topright", collapsed:true }).addTo(map);
 
-  // restore overlay toggles from the URL, else defaults (buildings + SWIS on)
+  // restore overlay toggles from the URL, else defaults (buildings on; SWIS is
+  // always on; the GA power layers are off by default so the outage view stays clean)
   if (buildings && (urlState.has ? urlState.overlays.has("buildings") : true)) buildings.addTo(map);
+  if (urlState.has){
+    if (urlState.overlays.has("lines"))    powerLines.addTo(map);
+    if (urlState.overlays.has("subs"))     substations.addTo(map);
+    if (urlState.overlays.has("stations")) powerStations.addTo(map);
+  }
 
   // GitHub source link, stacked under the layers menu (top-right)
   const ghCtrl = L.control({ position:"topright" });
@@ -740,9 +936,8 @@ function build(geo){
     if(!geo) return;
     const swis = L.geoJSON(geo, { interactive:false, style:{
       color:"#5b6b7c", weight:1.5, opacity:0.85, dashArray:"5 4", fill:false } });
-    overlayLayers["swis"] = swis;
-    layersCtrl.addOverlay(swis, "SWIS extent (approx.)");
-    if (urlState.has ? urlState.overlays.has("swis") : true){ swis.addTo(map); swis.bringToBack(); }
+    // always on — not a URL toggle and not in the layers menu
+    swis.addTo(map); swis.bringToBack();
   }).catch(()=>{});
 
   // Push the top controls below the bar now and after first paint (offsetTop and
@@ -752,18 +947,53 @@ function build(geo){
 
   const legend = L.control({ position:"bottomright" });
   legend.onAdd = () => {
-    const wrap = L.DomUtil.create("div");
-    polyLegendEl = L.DomUtil.create("div","panel legendbox", wrap);
+    // One box; each part is a .legsec that shows/hides so the box grows and
+    // shrinks as modes switch and layers toggle (refreshLegend draws dividers).
+    const wrap = L.DomUtil.create("div","panel legendbox");
+    legendBoxEl = wrap;
+    polyLegendEl = L.DomUtil.create("div","legsec", wrap);
     polyLegendEl.innerHTML = `<div><span class="swatch" style="background:#ff5a3c"></span>Unplanned outage</div>
                    <div><span class="swatch" style="background:#3b9dff"></span>Scheduled work</div>`;
-    heatLegendEl = L.DomUtil.create("div","panel legendbox", wrap);
+    heatLegendEl = L.DomUtil.create("div","legsec", wrap);
     heatLegendEl.style.display="none";
     heatLegendEl.innerHTML = `<div class="heatLegTitle" id="heatLegTitle">Outage-hours per cell</div>
                    <div class="grad"></div>
                    <div class="gradlabels"><span>0</span><span id="heatLegMax">—</span></div>`;
-    // SWIS row lives in its own box so it stays visible in both time + heatmap modes
-    const swisLegendEl = L.DomUtil.create("div","panel legendbox", wrap);
+    // SWIS row stays visible in both time + heatmap modes
+    const swisLegendEl = L.DomUtil.create("div","legsec", wrap);
     swisLegendEl.innerHTML = `<div><span class="swatch" style="background:transparent;border:1.5px dashed #5b6b7c"></span>SWIS extent (approx.)</div>`;
+    // Power-network key — rows appear only for the GA layers currently switched
+    // on. The voltage ramp covers transmission lines + substations; the station
+    // glyph mirrors the custom marker SVG.
+    const powerLegendEl = L.DomUtil.create("div","legsec", wrap);
+    const voltRows =
+      `<div style="font-weight:600;margin-bottom:2px">Voltage (lines)</div>`
+      + `<div><span class="swatch" style="background:#e4572e"></span>330 kV +</div>`
+      + `<div><span class="swatch" style="background:#f3a712"></span>220–275 kV</div>`
+      + `<div><span class="swatch" style="background:#ffd23f"></span>132 kV</div>`
+      + `<div><span class="swatch" style="background:#3fb950"></span>66–110 kV</div>`
+      + `<div><span class="swatch" style="background:#5b9bd5"></span>&lt; 66 kV</div>`;
+    const subRow =
+      `<div style="margin-top:3px"><span class="legend-ico"><svg viewBox="0 0 24 24">`
+      + `<rect x="3" y="3" width="18" height="18" rx="4.5" fill="#3fb950" stroke="#0d1117" stroke-width="1.6" paint-order="stroke"/>`
+      + `<path d="M13.4 5.4 L7.4 13.3 h3.5 l-1.6 5.3 6.3-7.9 h-3.6 z" fill="#fff" stroke="#0d1117" stroke-width="0.5" stroke-linejoin="round"/>`
+      + `</svg></span>Substation</div>`;
+    const stationRow =
+      `<div style="margin-top:3px"><span class="legend-ico"><svg viewBox="0 0 24 24">`
+      + `<rect x="3" y="3" width="18" height="18" rx="4.5" fill="#f5c518" stroke="#0d1117" stroke-width="1.6" paint-order="stroke"/>`
+      + `<path d="M13.4 5.4 L7.4 13.3 h3.5 l-1.6 5.3 6.3-7.9 h-3.6 z" fill="#fff" stroke="#0d1117" stroke-width="0.5" stroke-linejoin="round"/>`
+      + `</svg></span>Power station</div>`;
+    function syncPowerLegend(){
+      const volt = map.hasLayer(powerLines);
+      const sub  = map.hasLayer(substations);
+      const sta  = map.hasLayer(powerStations);
+      powerLegendEl.innerHTML = (volt ? voltRows : "") + (sub ? subRow : "") + (sta ? stationRow : "");
+      powerLegendEl.style.display = (volt || sub || sta) ? "" : "none";
+      refreshLegend();
+    }
+    [powerLines, substations, powerStations].forEach(l => {
+      l.on("add", syncPowerLegend); l.on("remove", syncPowerLegend); });
+    syncPowerLegend();
     return wrap;
   };
   legend.addTo(map);
@@ -839,8 +1069,14 @@ metricBtns.forEach(b => b.onclick = () => {
   if(heatActive) computeHeat();
 });
 
-el("heatStart").onchange = () => { if(heatActive) computeHeat(); };
-el("heatEnd").onchange   = () => { if(heatActive) computeHeat(); };
+// One shared date window drives both modes; on change, keep the timeline's
+// slider/sparkline in sync and re-render whichever view is active.
+function rangeChanged(){
+  if(temporal){ buildSeries(); drawSpark(); }
+  if(heatActive) computeHeat(); else render();
+}
+el("heatStart").onchange = rangeChanged;
+el("heatEnd").onchange   = rangeChanged;
 
 // readout over heat cells: follows the cursor on desktop (hover), and stays put
 // on touch where a tap is the only "hover" you get.
