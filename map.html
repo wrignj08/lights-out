@@ -188,7 +188,7 @@
     <!-- liveStats last: its numbers change while playing, so keep it at the end
          so nothing after it reflows -->
     <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers</span>
-    <span class="ver">v1.5</span>
+    <span class="ver">v1.6</span>
   </div>
   <div class="tabsrow">
     <div class="tabs">
@@ -658,9 +658,11 @@ function binHeat(a,b,metric,dLat,dLng,bounds){
 }
 
 // Static color-scale max for a given cell size: the peak per-cell value across
-// the WHOLE dataset (not the viewport). Computed once per cell size + window +
-// metric and cached on heatState, so panning never rescales the colors — the
-// max only changes when the zoom's cell size (or the heat settings) changes.
+// the WHOLE dataset, over the ENTIRE time domain (not the viewport and not the
+// selected window). Scanning over [tMin,tMax] means the colour scale + legend
+// max stay fixed as you change the date range — a window only ever shows a
+// subset, so its cells can't exceed this full-domain peak. Cached per cell size
+// + metric (window-independent) and cleared when the dataset itself updates.
 // Scanning the whole dataset at a deep-zoom cell size is catastrophic: a single
 // state-wide polygon spans millions of 50m cells, each point-in-polygon tested.
 // But the peak per-cell value barely changes once cells get smaller than the
@@ -670,13 +672,17 @@ function binHeat(a,b,metric,dLat,dLng,bounds){
 // where small polygons merge into one cell and the max genuinely rises, still
 // get their own exact value.
 const HEAT_MAX_SCAN_KM = 2;
+const heatMaxCache = new Map();   // "metric,scanKm" -> peak per-cell value (full domain)
 function staticHeatMax(km){
-  const {a,b,metric,maxCache}=heatState;
+  const {metric}=heatState;
   const sk=Math.max(km,HEAT_MAX_SCAN_KM);     // floor the scan resolution
-  if(maxCache.has(sk)) return maxCache.get(sk);
+  const key=metric+","+sk;
+  if(heatMaxCache.has(key)) return heatMaxCache.get(key);
+  // full time domain; fall back to the window if there's no temporal range yet
+  const a = tMin!=null ? tMin : heatState.a, b = tMax!=null ? tMax : heatState.b;
   const dLat=sk/110.574, dLng=sk/(111.320*Math.cos(HLAT*Math.PI/180));
   let mx=0; for(const c of binHeat(a,b,metric,dLat,dLng,null).values()) if(c.val>mx) mx=c.val;
-  const v=Math.max(1,mx); maxCache.set(sk,v); return v;
+  const v=Math.max(1,mx); heatMaxCache.set(key,v); return v;
 }
 
 function recomputeHeat(){
@@ -767,7 +773,7 @@ function computeHeat(){            // (re)build the heatmap from the current hea
     nOut++;
   }
   if(!nOut){ removeHeat(); return; }   // nothing in range — clear the layer
-  heatState = { a, b, metric, maxCache: new Map() };
+  heatState = { a, b, metric };
   if(!heatLayer) heatLayer=new HeatLayer();
   if(!map.hasLayer(heatLayer)) heatLayer.addTo(map); else heatLayer._reset();
 }
@@ -874,6 +880,7 @@ function applyData(geo, firstTime){
   const shown = { type:"FeatureCollection",
                   features: geo.features.filter(f=>f.geometry && !F.stuck(f.properties)) };
   heatFeatures = shown.features;   // full features (geometry+props) for the grid
+  heatMaxCache.clear();            // new data -> full-domain colour max may have changed
   el("src").textContent = `dataset contains ${shown.features.length.toLocaleString()} outages`;
   // last scrape time: from the build stamp, else newest last-seen in the data
   const gen = geo.generated_utc ? Date.parse(geo.generated_utc)
