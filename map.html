@@ -194,7 +194,7 @@
     <!-- liveStats last: its numbers change while playing, so keep it at the end
          so nothing after it reflows -->
     <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers</span>
-    <span class="ver">v1.9</span>
+    <span class="ver">v1.10</span>
   </div>
   <div class="tabsrow">
     <div class="tabs">
@@ -250,6 +250,18 @@ function parseHash(){
   return st;
 }
 const urlState = parseHash();
+// Mode is only fully applied by setMode() once data has loaded, but the panel
+// markup defaults to Time — so a heat-mode load flashes the time UI until then.
+// Resolve the mode now and paint the correct tab/panel state synchronously.
+const initialMode = (urlState.has && urlState.mode) ? urlState.mode : "heat";
+(function(){
+  const heat = initialMode === "heat";
+  document.getElementById("tabTime").classList.toggle("active", !heat);
+  document.getElementById("tabHeat").classList.toggle("active", heat);
+  document.getElementById("panelTime").style.display = heat ? "none" : "flex";
+  document.getElementById("panelHeat").style.display = heat ? "flex" : "none";
+  document.getElementById("liveStats").style.display = heat ? "none" : "";
+})();
 const overlayLayers = {};   // key -> layer, registered as overlays are created
 let restoring = true;       // suppress hash writes until the initial state is applied
 
@@ -1070,7 +1082,7 @@ function build(geo){
   legend.addTo(map);
   syncBottomControls();   // lift the legend above the attribution
 
-  setMode(urlState.has && urlState.mode ? urlState.mode : "heat");   // restore mode, else heatmap
+  setMode(initialMode);   // restore mode (else heatmap); pre-painted at startup
   restoring = false;   // initial state applied — hash writes can begin
   writeHash();
   startAutoRefresh();
