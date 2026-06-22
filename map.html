@@ -188,7 +188,7 @@
     <!-- liveStats last: its numbers change while playing, so keep it at the end
          so nothing after it reflows -->
     <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers</span>
-    <span class="ver">v1.6</span>
+    <span class="ver">v1.7</span>
   </div>
   <div class="tabsrow">
     <div class="tabs">
@@ -533,13 +533,11 @@ let outageLayer, feats=[], tMin=null, tMax=null, temporal=false;
 let series=[], sMax=1, playing=false, playTimer=null;
 let heatFeatures=[], heatLayer=null, gridMap=null, heatTip=null;
 let heatState=null, heatCells=null, heatMax=1, heatDLat=0, heatDLng=0;
-let heatBlurBuf=null;   // offscreen canvas: grid is drawn here, then blurred onto the layer
-// canvas blur() filter support (Safari got it in 14; fall back to crisp cells if absent)
-const HEAT_CAN_BLUR = (()=>{ try{ const c=document.createElement("canvas").getContext("2d");
-  c.filter="blur(2px)"; return c.filter==="blur(2px)"; }catch(e){ return false; } })();
-// EXPERIMENT (heatmap-blur branch): blur the binned grid into a smooth field so the
-// blocky cells read as a continuous heatmap. Radius tracks the cell's pixel size,
-// so it smooths equally at every zoom. 0 disables (crisp grid, i.e. main's look).
+// Blur the binned grid into a smooth field so the blocky cells read as a
+// continuous heatmap. Applied as a CSS filter on the canvas element (reliable on
+// every browser incl. iOS Safari — canvas ctx.filter renders blank there). The
+// radius tracks the cell's pixel size, so it smooths equally at every zoom.
+// 0 disables (crisp grid).
 const HEAT_BLUR_K = 1.6;
 let polyLegendEl=null, heatLegendEl=null, legendBoxEl=null;
 const TOL = 5*60*1000;
@@ -622,6 +620,10 @@ const HeatLayer = L.Layer.extend({
     const ctx=this._canvas.getContext("2d");
     ctx.clearRect(0,0,size.x,size.y);
     ctx.drawImage(buf,0,0);
+    // smooth the blocky cells via a CSS blur on the element (works on iOS Safari,
+    // where canvas ctx.filter does not). -webkit- for older WebKit.
+    const b=heatBlurPx();
+    this._canvas.style.filter = this._canvas.style.webkitFilter = b>=0.5 ? `blur(${b}px)` : "";
   }
 });
 
@@ -704,29 +706,22 @@ function drawHeat(ctx){
   const W=ctx.canvas.width, H=ctx.canvas.height;
   ctx.clearRect(0,0,W,H);
   if(!heatCells) return;
-  // Paint the binned cells onto an offscreen buffer first, then blur that whole
-  // buffer onto the visible layer — the blur turns the grid into a smooth field.
-  const g=heatBlurBuf||(heatBlurBuf=document.createElement("canvas"));
-  g.width=W; g.height=H;
-  const gx=g.getContext("2d");
-  gx.clearRect(0,0,W,H);
+  // crisp cells; the smooth-field look comes from a CSS blur on the canvas (see _reset)
   for(const c of heatCells){
     const tl=map.latLngToContainerPoint([(c.iy+1)*heatDLat, c.ix*heatDLng]);
     const br=map.latLngToContainerPoint([c.iy*heatDLat, (c.ix+1)*heatDLng]);
     // log-normalize so a few outlier cells don't crush everything else to the low end
     const t=Math.log1p(c.val)/Math.log1p(heatMax);
-    gx.fillStyle=heatRGBA(t, 0.25+0.55*t);
-    gx.fillRect(tl.x, tl.y, Math.ceil(br.x-tl.x)+1, Math.ceil(br.y-tl.y)+1);   // +1 avoids seams
+    ctx.fillStyle=heatRGBA(t, 0.25+0.55*t);
+    ctx.fillRect(tl.x, tl.y, Math.ceil(br.x-tl.x)+1, Math.ceil(br.y-tl.y)+1);   // +1 avoids seams
   }
-  // blur radius = a fixed multiple of the cell's on-screen height, so coarse
-  // (zoomed-out) cells get smoothed as much as fine ones
+}
+// blur radius = a fixed multiple of the cell's on-screen height, so coarse
+// (zoomed-out) cells get smoothed as much as fine ones. Returns CSS px.
+function heatBlurPx(){
+  if(!(HEAT_BLUR_K>0) || !heatDLat) return 0;
   const o=map.latLngToContainerPoint([0,0]), o2=map.latLngToContainerPoint([heatDLat,0]);
-  const cellPx=Math.abs(o2.y-o.y), blurPx=Math.min(48, cellPx*HEAT_BLUR_K);
-  if(HEAT_CAN_BLUR && HEAT_BLUR_K>0 && blurPx>=1){
-    ctx.filter=`blur(${blurPx}px)`; ctx.drawImage(g,0,0); ctx.filter="none";
-  } else {
-    ctx.drawImage(g,0,0);
-  }
+  return Math.min(48, Math.abs(o2.y-o.y)*HEAT_BLUR_K);
 }
 
 // Time / Heatmap are mutually exclusive, switched by the tabs. The panel area is
