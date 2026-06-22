@@ -105,9 +105,15 @@
      visible section sits above it (toggled by refreshLegend) */
   .legsec.divided { border-top:1px solid var(--line); margin-top:7px; padding-top:7px; }
   .heatLegTitle { font-weight:600; margin-bottom:3px; }
-  .grad { width:150px; height:10px; border-radius:3px;
+  .heatLegLog { font-weight:400; font-size:10px; color:var(--muted); }
+  .grad { width:172px; height:10px; border-radius:3px;
           background:linear-gradient(to right, rgb(38,198,218), rgb(102,187,106), rgb(255,235,59), rgb(255,152,0), rgb(244,67,54), rgb(233,30,99)); }
-  .gradlabels { display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-top:2px; }
+  /* tick labels sit at their true log-scale x-position under the bar, so the
+     bunching of high values is visible rather than implied */
+  .gradticks { position:relative; width:172px; height:18px; margin-top:1px; }
+  .gtick { position:absolute; top:0; display:flex; flex-direction:column; align-items:center;
+           font-size:10px; line-height:1.2; color:var(--muted); white-space:nowrap; }
+  .gtick::before { content:""; width:1px; height:4px; background:var(--line); margin-bottom:2px; }
   .leaflet-control-layers { background:var(--panel)!important; color:var(--ink); border:1px solid var(--line)!important; border-radius:12px!important; }
   .leaflet-control-layers-expanded { padding:8px 10px!important; }
   .leaflet-control-layers label { font-size:12px; }
@@ -188,7 +194,7 @@
     <!-- liveStats last: its numbers change while playing, so keep it at the end
          so nothing after it reflows -->
     <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers</span>
-    <span class="ver">v1.7</span>
+    <span class="ver">v1.8</span>
   </div>
   <div class="tabsrow">
     <div class="tabs">
@@ -698,8 +704,31 @@ function recomputeHeat(){
   heatMax=staticHeatMax(km);              // static scale from the full dataset, not the view
   if(heatLegendEl){
     el("heatLegTitle").textContent = metric==="count" ? "Outages per cell" : "Outage-hours per cell";
-    el("heatLegMax").textContent = metric==="count" ? Math.round(heatMax) : `${Math.round(heatMax)}h`;
+    renderHeatTicks(heatMax, metric);
   }
+}
+
+// The fill colour is t=log1p(val)/log1p(max), so a value's position on the bar
+// is its log, not its fraction of max. Lay round-number ticks at those true
+// positions (plus 0 and max as endpoints) so the log compression is visible.
+function heatTicks(max){
+  const L=Math.log1p(max), out=[]; let lastT=-1;
+  for(let e=0;e<8;e++) for(const m of [1,2,5]){
+    const v=m*Math.pow(10,e); if(v>=max) break;
+    const t=Math.log1p(v)/L;
+    if(t<0.1||t>0.84) continue;      // keep clear of the 0 / max endpoints
+    if(t-lastT<0.2) continue;        // min spacing so labels don't collide
+    out.push(v); lastT=t;
+  }
+  return out;
+}
+function renderHeatTicks(max, metric){
+  const L=Math.log1p(max), fmt=v=> metric==="count" ? `${Math.round(v)}` : `${Math.round(v)}h`;
+  const items=[{v:0,t:0}, ...heatTicks(max).map(v=>({v,t:Math.log1p(v)/L})), {v:max,t:1}];
+  el("heatLegTicks").innerHTML = items.map(({v,t})=>{
+    const tx = t<=0.02 ? "0" : t>=0.98 ? "-100%" : "-50%";   // keep endpoints inside the bar
+    return `<span class="gtick" style="left:${(t*100).toFixed(1)}%;transform:translateX(${tx})">${fmt(v)}</span>`;
+  }).join("");
 }
 
 function drawHeat(ctx){
@@ -982,9 +1011,9 @@ function build(geo){
                    <div><span class="swatch" style="background:#3b9dff"></span>Scheduled work</div>`;
     heatLegendEl = L.DomUtil.create("div","legsec", wrap);
     heatLegendEl.style.display="none";
-    heatLegendEl.innerHTML = `<div class="heatLegTitle" id="heatLegTitle">Outage-hours per cell</div>
+    heatLegendEl.innerHTML = `<div class="heatLegTitle"><span id="heatLegTitle">Outage-hours per cell</span> <span class="heatLegLog">· log scale</span></div>
                    <div class="grad"></div>
-                   <div class="gradlabels"><span>0</span><span id="heatLegMax">—</span></div>`;
+                   <div class="gradticks" id="heatLegTicks"></div>`;
     // SWIS row stays visible in both time + heatmap modes
     const swisLegendEl = L.DomUtil.create("div","legsec", wrap);
     swisLegendEl.innerHTML = `<div><span class="swatch" style="background:transparent;border:1.5px dashed #5b6b7c"></span>SWIS extent (approx.)</div>`;
