@@ -194,7 +194,7 @@
     <!-- liveStats last: its numbers change while playing, so keep it at the end
          so nothing after it reflows -->
     <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers</span>
-    <span class="ver">v1.8</span>
+    <span class="ver">v1.9</span>
   </div>
   <div class="tabsrow">
     <div class="tabs">
@@ -593,12 +593,17 @@ const HeatLayer = L.Layer.extend({
     map.getPanes().overlayPane.appendChild(c);
     map.on("moveend zoomend resize", this._reset, this);
     if(map.options.zoomAnimation && L.Browser.any3d) map.on("zoomanim", this._animateZoom, this);
+    // Touch pinch-zoom doesn't fire `zoomanim` — Leaflet drives it through
+    // `_move`, which fires `zoom` each frame. Track that too, or the canvas
+    // detaches from the map during the pinch and only snaps back at zoomend.
+    map.on("zoom", this._pinchZoom, this);
     this._reset();
     return this;
   },
   onRemove(map){
     map.off("moveend zoomend resize", this._reset, this);
     map.off("zoomanim", this._animateZoom, this);
+    map.off("zoom", this._pinchZoom, this);
     L.DomUtil.remove(this._canvas); this._canvas=null;
   },
   // scale the existing pixels to follow the zoom animation (no blank/blink);
@@ -610,9 +615,20 @@ const HeatLayer = L.Layer.extend({
     const offset=this._map._latLngBoundsToNewLayerBounds(this._bounds, e.zoom, e.center).min;
     L.DomUtil.setTransform(this._canvas, offset, scale);
   },
+  // pinch path: `zoom` fires after _move has already updated map._zoom, so we
+  // scale against the zoom the canvas was last drawn at (_zoomLevel), the same
+  // way Leaflet's own renderers track a pinch.
+  _pinchZoom(){
+    if(this._zoomLevel==null || !this._bounds) return;
+    const map=this._map, z=map.getZoom();
+    const scale=map.getZoomScale(z, this._zoomLevel);
+    const offset=map._latLngBoundsToNewLayerBounds(this._bounds, z, map.getCenter()).min;
+    L.DomUtil.setTransform(this._canvas, offset, scale);
+  },
   _reset(){
     const map=this._map, size=map.getSize();
     this._bounds = map.getBounds();   // geographic area the canvas covers (for _animateZoom)
+    this._zoomLevel = map.getZoom();  // zoom the canvas is drawn at (for _pinchZoom)
     // Double-buffer: build the new grid on an offscreen canvas first, so the
     // old grid stays on screen until the new one is fully rendered.
     recomputeHeat();
