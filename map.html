@@ -194,7 +194,7 @@
     <!-- liveStats last: its numbers change while playing, so keep it at the end
          so nothing after it reflows -->
     <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers</span>
-    <span class="ver">v1.10</span>
+    <span class="ver">v1.11</span>
   </div>
   <div class="tabsrow">
     <div class="tabs">
@@ -604,7 +604,7 @@ const HeatLayer = L.Layer.extend({
     c.style.position="absolute"; c.style.pointerEvents="none"; c.style.transformOrigin="0 0";
     map.getPanes().overlayPane.appendChild(c);
     map.on("moveend zoomend resize", this._reset, this);
-    if(map.options.zoomAnimation && L.Browser.any3d) map.on("zoomanim", this._animateZoom, this);
+    if(map.options.zoomAnimation && L.Browser.any3d) map.on("zoomanim", this._onZoomAnim, this);
     // Touch pinch-zoom doesn't fire `zoomanim` — Leaflet drives it through
     // `_move`, which fires `zoom` each frame. Track that too, or the canvas
     // detaches from the map during the pinch and only snaps back at zoomend.
@@ -614,7 +614,7 @@ const HeatLayer = L.Layer.extend({
   },
   onRemove(map){
     map.off("moveend zoomend resize", this._reset, this);
-    map.off("zoomanim", this._animateZoom, this);
+    map.off("zoomanim", this._onZoomAnim, this);
     map.off("zoom", this._pinchZoom, this);
     L.DomUtil.remove(this._canvas); this._canvas=null;
   },
@@ -622,21 +622,19 @@ const HeatLayer = L.Layer.extend({
   // _reset then redraws crisply at the new zoom's cell size on zoomend.
   // Uses the L.ImageOverlay approach: project the canvas's geographic bounds
   // to the target zoom (correct for zoom in AND out, with transform-origin 0 0).
-  _animateZoom(e){
-    const scale=this._map.getZoomScale(e.zoom);
-    const offset=this._map._latLngBoundsToNewLayerBounds(this._bounds, e.zoom, e.center).min;
-    L.DomUtil.setTransform(this._canvas, offset, scale);
-  },
-  // pinch path: `zoom` fires after _move has already updated map._zoom, so we
-  // scale against the zoom the canvas was last drawn at (_zoomLevel), the same
-  // way Leaflet's own renderers track a pinch.
-  _pinchZoom(){
+  // Scale is taken against _zoomLevel — the zoom the canvas pixels were drawn
+  // at — NOT map._zoom: at the pinch-release settle, map._zoom is the fractional
+  // pinch zoom, so scaling against it detaches the canvas during the settle.
+  _animateZoom(zoom, center){
     if(this._zoomLevel==null || !this._bounds) return;
-    const map=this._map, z=map.getZoom();
-    const scale=map.getZoomScale(z, this._zoomLevel);
-    const offset=map._latLngBoundsToNewLayerBounds(this._bounds, z, map.getCenter()).min;
+    const scale=this._map.getZoomScale(zoom, this._zoomLevel);
+    const offset=this._map._latLngBoundsToNewLayerBounds(this._bounds, zoom, center).min;
     L.DomUtil.setTransform(this._canvas, offset, scale);
   },
+  _onZoomAnim(e){ this._animateZoom(e.zoom, e.center); },
+  // pinch path: `zoom` fires after _move has already updated map._zoom, so read
+  // the live zoom/center off the map. Same transform as the settle animation.
+  _pinchZoom(){ this._animateZoom(this._map.getZoom(), this._map.getCenter()); },
   _reset(){
     const map=this._map, size=map.getSize();
     this._bounds = map.getBounds();   // geographic area the canvas covers (for _animateZoom)
