@@ -194,7 +194,7 @@
     <!-- liveStats last: its numbers change while playing, so keep it at the end
          so nothing after it reflows -->
     <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers</span>
-    <span class="ver">v1.11</span>
+    <span class="ver">v1.12</span>
   </div>
   <div class="tabsrow">
     <div class="tabs">
@@ -549,7 +549,7 @@ function popup(p){
 // ---------- state ----------
 let outageLayer, feats=[], tMin=null, tMax=null, temporal=false;
 let series=[], sMax=1, playing=false, playTimer=null;
-let heatFeatures=[], heatLayer=null, gridMap=null, heatTip=null;
+let heatFeatures=[], heatPolys=[], heatLayer=null, gridMap=null, heatTip=null;
 let heatState=null, heatCells=null, heatMax=1, heatDLat=0, heatDLng=0;
 // Blur the binned grid into a smooth field so the blocky cells read as a
 // continuous heatmap. Applied as a CSS filter on the canvas element (reliable on
@@ -557,6 +557,9 @@ let heatState=null, heatCells=null, heatMax=1, heatDLat=0, heatDLng=0;
 // radius tracks the cell's pixel size, so it smooths equally at every zoom.
 // 0 disables (crisp grid).
 const HEAT_BLUR_K = 1.6;
+// At deep zoom the smoothing hides the per-cell structure; past this zoom drop
+// the blur entirely and show the native grid cells crisply.
+const HEAT_CRISP_ZOOM = 15;
 let polyLegendEl=null, heatLegendEl=null, legendBoxEl=null;
 const TOL = 5*60*1000;
 
@@ -659,6 +662,22 @@ const HeatLayer = L.Layer.extend({
   }
 });
 
+// Precompute the per-feature geometry that binHeat needs but that never changes:
+// the outer ring, its lng/lat bounding box, its centroid, and the active
+// window. Recomputed only when the dataset changes — not on every pan/zoom.
+function buildHeatPolys(){
+  heatPolys=[];
+  for(const f of heatFeatures){
+    if(!f.geometry) continue;
+    const p=f.properties; let s=F.aStart(p), e=F.aEnd(p);
+    if(s==null) continue; if(e==null||e<s) e=s;
+    const ring=ring0(f.geometry);
+    let mnX=Infinity,mnY=Infinity,mxX=-Infinity,mxY=-Infinity,cx=0,cy=0;
+    for(const [lng,lat] of ring){ if(lng<mnX)mnX=lng;if(lng>mxX)mxX=lng;if(lat<mnY)mnY=lat;if(lat>mxY)mxY=lat;cx+=lng;cy+=lat; }
+    heatPolys.push({ ring, s, e, mnX, mnY, mxX, mxY, cx:cx/ring.length, cy:cy/ring.length });
+  }
+}
+
 // Bin features into a grid of cells sized by (dLat,dLng). `bounds` (optional)
 // restricts binning to cells overlapping that area; pass null to bin the whole
 // dataset. Returns a Map keyed "ix,iy" of {ix,iy,val}.
@@ -670,21 +689,17 @@ function binHeat(a,b,metric,dLat,dLng,bounds){
   }
   const grid=new Map();
   const bump=(ix,iy,w)=>{ const k=ix+","+iy,c=grid.get(k); if(c)c.val+=w; else grid.set(k,{ix,iy,val:w}); };
-  for(const f of heatFeatures){
-    const p=f.properties; let s=F.aStart(p), e=F.aEnd(p);
-    if(s==null) continue; if(e==null||e<s) e=s;
-    const ov=Math.max(0, Math.min(b,e)-Math.max(a,s)); if(ov<=0) continue;   // window overlap
+  for(const f of heatPolys){
+    const ov=Math.max(0, Math.min(b,f.e)-Math.max(a,f.s)); if(ov<=0) continue;   // window overlap
     const w = metric==="count" ? 1 : ov/3600000;
-    const ring=ring0(f.geometry);
-    let mnX=Infinity,mnY=Infinity,mxX=-Infinity,mxY=-Infinity,cx=0,cy=0;
-    for(const [lng,lat] of ring){ if(lng<mnX)mnX=lng;if(lng>mxX)mxX=lng;if(lat<mnY)mnY=lat;if(lat>mxY)mxY=lat;cx+=lng;cy+=lat; }
-    const ix0=Math.max(VX0,Math.floor(mnX/dLng)), ix1=Math.min(VX1,Math.floor(mxX/dLng));
-    const iy0=Math.max(VY0,Math.floor(mnY/dLat)), iy1=Math.min(VY1,Math.floor(mxY/dLat));
+    const ring=f.ring;
+    const ix0=Math.max(VX0,Math.floor(f.mnX/dLng)), ix1=Math.min(VX1,Math.floor(f.mxX/dLng));
+    const iy0=Math.max(VY0,Math.floor(f.mnY/dLat)), iy1=Math.min(VY1,Math.floor(f.mxY/dLat));
     let any=false;
     for(let ix=ix0;ix<=ix1;ix++) for(let iy=iy0;iy<=iy1;iy++)
       if(pointInPolygon((ix+0.5)*dLng,(iy+0.5)*dLat,ring)){ bump(ix,iy,w); any=true; }
     if(!any){   // polygon smaller than a cell -> its centroid cell (if in bounds)
-      const gx=Math.floor((cx/ring.length)/dLng), gy=Math.floor((cy/ring.length)/dLat);
+      const gx=Math.floor(f.cx/dLng), gy=Math.floor(f.cy/dLat);
       if(gx>=VX0&&gx<=VX1&&gy>=VY0&&gy<=VY1) bump(gx,gy,w);
     }
   }
@@ -761,20 +776,27 @@ function drawHeat(ctx){
   const W=ctx.canvas.width, H=ctx.canvas.height;
   ctx.clearRect(0,0,W,H);
   if(!heatCells) return;
+  // Cell edges lie on a regular lat/lng grid, so every cell in a column shares
+  // an x and every cell in a row shares a y. Project each unique edge once
+  // (Mercator x depends only on lng, y only on lat) instead of 2 projections
+  // per cell. Cuts the projection count from O(cells) to O(cols+rows).
+  const logMax=Math.log1p(heatMax), xc=new Map(), yc=new Map();
+  const xAt=ix=>{ let v=xc.get(ix); if(v===undefined){ v=map.latLngToContainerPoint([0, ix*heatDLng]).x; xc.set(ix,v); } return v; };
+  const yAt=iy=>{ let v=yc.get(iy); if(v===undefined){ v=map.latLngToContainerPoint([iy*heatDLat, 0]).y; yc.set(iy,v); } return v; };
   // crisp cells; the smooth-field look comes from a CSS blur on the canvas (see _reset)
   for(const c of heatCells){
-    const tl=map.latLngToContainerPoint([(c.iy+1)*heatDLat, c.ix*heatDLng]);
-    const br=map.latLngToContainerPoint([c.iy*heatDLat, (c.ix+1)*heatDLng]);
+    const tlx=xAt(c.ix), tly=yAt(c.iy+1);   // top-left: left lng, higher lat (smaller y)
     // log-normalize so a few outlier cells don't crush everything else to the low end
-    const t=Math.log1p(c.val)/Math.log1p(heatMax);
+    const t=Math.log1p(c.val)/logMax;
     ctx.fillStyle=heatRGBA(t, 0.25+0.55*t);
-    ctx.fillRect(tl.x, tl.y, Math.ceil(br.x-tl.x)+1, Math.ceil(br.y-tl.y)+1);   // +1 avoids seams
+    ctx.fillRect(tlx, tly, Math.ceil(xAt(c.ix+1)-tlx)+1, Math.ceil(yAt(c.iy)-tly)+1);   // +1 avoids seams
   }
 }
 // blur radius = a fixed multiple of the cell's on-screen height, so coarse
 // (zoomed-out) cells get smoothed as much as fine ones. Returns CSS px.
 function heatBlurPx(){
   if(!(HEAT_BLUR_K>0) || !heatDLat) return 0;
+  if(map.getZoom() >= HEAT_CRISP_ZOOM) return 0;   // deep zoom: show the native grid
   const o=map.latLngToContainerPoint([0,0]), o2=map.latLngToContainerPoint([heatDLat,0]);
   return Math.min(48, Math.abs(o2.y-o.y)*HEAT_BLUR_K);
 }
@@ -816,12 +838,7 @@ function computeHeat(){            // (re)build the heatmap from the current hea
   if(isNaN(a)||isNaN(b)||b<=a){ removeHeat(); return; }
   const metric=currentMetric();
   let nOut=0;                                        // outages overlapping the window
-  for(const f of heatFeatures){
-    const p=f.properties; let s=F.aStart(p), e=F.aEnd(p);
-    if(s==null) continue; if(e==null||e<s) e=s;
-    const ov=Math.max(0, Math.min(b,e)-Math.max(a,s)); if(ov<=0) continue;
-    nOut++;
-  }
+  for(const f of heatPolys) if(Math.min(b,f.e)>Math.max(a,f.s)) nOut++;
   if(!nOut){ removeHeat(); return; }   // nothing in range — clear the layer
   heatState = { a, b, metric };
   if(!heatLayer) heatLayer=new HeatLayer();
@@ -930,6 +947,7 @@ function applyData(geo, firstTime){
   const shown = { type:"FeatureCollection",
                   features: geo.features.filter(f=>f.geometry && !F.stuck(f.properties)) };
   heatFeatures = shown.features;   // full features (geometry+props) for the grid
+  buildHeatPolys();                // precompute rings/bboxes/centroids for binning
   heatMaxCache.clear();            // new data -> full-domain colour max may have changed
   el("src").textContent = `dataset contains ${shown.features.length.toLocaleString()} outages`;
   // last scrape time: from the build stamp, else newest last-seen in the data
