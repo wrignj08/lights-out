@@ -92,6 +92,13 @@
   .segbtn:first-child { border-left:none; }
   .segbtn:hover { background:var(--btn); color:var(--ink); }
   .segbtn.active { background:var(--accent); color:#fff; }
+  /* heat metric toggle: fill the panel — full width, equal columns, full height */
+  #panelHeat { align-self:stretch; align-items:stretch; }
+  #panelHeat .heatgroup { flex:1; align-items:stretch; }
+  #heatMetric { flex:1; max-width:340px; min-height:44px; border-radius:9px; }
+  #heatMetric .segbtn { flex:1; display:flex; align-items:center; justify-content:center;
+                        padding:0 12px; font-size:13px; font-weight:500;
+                        transition:background .12s ease, color .12s ease; }
   /* power-network SVG markers (divIcon) — drop Leaflet's default white box */
   .power-icon { background:none; border:none; }
   .power-icon svg { display:block; width:100%; height:100%;
@@ -99,7 +106,8 @@
   .legend-ico { display:inline-block; width:15px; height:15px; margin-right:5px; vertical-align:-3px; }
 
   /* legend + layers (bottom-right Leaflet controls) */
-  .legendbox { padding:8px 11px; font-size:12px; line-height:1.7; }
+  .legendbox { padding:8px 11px; font-size:12px; line-height:1.7;
+               -webkit-user-select:text; user-select:text; cursor:auto; }
   .legendbox .swatch { display:inline-block; width:11px; height:11px; border-radius:3px; margin-right:7px; vertical-align:-1px; }
   /* one box, many sections: a section gets a top divider only when another
      visible section sits above it (toggled by refreshLegend) */
@@ -194,7 +202,7 @@
     <!-- liveStats last: its numbers change while playing, so keep it at the end
          so nothing after it reflows -->
     <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers</span>
-    <span class="ver">v1.13</span>
+    <span class="ver">v1.14</span>
   </div>
   <div class="tabsrow">
     <div class="tabs">
@@ -225,7 +233,7 @@
         <div class="seg" id="heatMetric" role="group" aria-label="Heatmap metric">
           <button type="button" class="segbtn active" data-metric="hours">Outage-hours</button>
           <button type="button" class="segbtn" data-metric="count">Count</button>
-          <button type="button" class="segbtn" data-metric="down">% down</button>
+          <button type="button" class="segbtn" data-metric="down">Percentage outage-time</button>
         </div>
       </div>
     </div>
@@ -393,7 +401,9 @@ map.createPane("powerPane");
 // layer is one full-viewport <canvas> in the overlayPane — if powerPane were
 // below it that canvas would swallow every click before it reached the markers.
 map.getPane("powerPane").style.zIndex = 450;   // above outages(400), below shadow(500)/markers(600)
-const powerRenderer = L.canvas({ pane:"powerPane" });   // dedicated canvas so the lines draw + stay clickable in this pane
+// tolerance extends the click/tap hit-test around each line (px) so the thin
+// 1–2px strokes are easy to hit without drawing them any wider
+const powerRenderer = L.canvas({ pane:"powerPane", tolerance:8 });   // dedicated canvas for both line layers
 // Points (substations + stations) live in their OWN pane just above the lines
 // pane, so they always render on top of the transmission lines.
 map.createPane("powerPtsPane");
@@ -405,21 +415,18 @@ const gaUrl = (layer, fields) =>
   `${GA_BASE}/${layer}/query?where=${encodeURIComponent("STATE='Western Australia'")}` +
   `&outFields=${fields}&outSR=4326&f=geojson`;
 const GA_ATTRIB = 'Power network &copy; <a href="https://www.ga.gov.au">Geoscience Australia</a>';
+const TX_COLOR = "#f5b700";   // transmission lines — single colour (distinct from the blue distribution lines)
 
-// kV -> colour ramp, shared by lines (CAPACITYKV) and substations (VOLTAGEKV)
-const kvColor = kv =>
-  kv >= 330 ? "#e4572e" :   // 330/500 kV — bulk transmission
-  kv >= 220 ? "#f3a712" :   // 220/275 kV
-  kv >= 132 ? "#ffd23f" :   // 132 kV
-  kv >= 66  ? "#3fb950" :   // 66/88/110 kV — sub-transmission
-  kv >   0  ? "#5b9bd5" :   // 11/22/33/44 kV — distribution
-              "#8b98a5";    // unknown
 const norm = s => (s || "").trim();
 // NOTE: ArcGIS f=geojson output lowercases all field names, so properties are
 // read as p.capacitykv / p.operationalstatus etc. (not the uppercase REST names).
 const isOperational = p => norm(p.operationalstatus).toLowerCase() === "operational";
 const gaEsc = s => String(s ?? "").replace(/[&<>]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;" }[c]));
 const powerRow = (k, v) => `<div><span style="color:var(--muted)">${k}:</span> ${v}</div>`;
+// shared popup format for the two powerline layers (transmission GA + distribution
+// BYDA): a bold type heading, then one row per non-empty [label, value] pair.
+const linePopup = (title, rows) =>
+  `<b>${title}</b>` + rows.filter(r => r[1]).map(([k, v]) => powerRow(k, v)).join("");
 
 // Custom SVG marker files (icons/), fetched once on first activation. The
 // substation icon carries a __FILL__ token recoloured per voltage; the power
@@ -438,14 +445,14 @@ const powerLines = L.geoJSON(null, {
   pane: "powerPane", renderer: powerRenderer, attribution: GA_ATTRIB,
   style: f => {
     const kv = f.properties.capacitykv, op = isOperational(f.properties);
-    return { color:kvColor(kv), weight: kv>=220?2.6 : kv>=132?2 : 1.4,
+    return { color:TX_COLOR, weight: kv>=220?2.6 : kv>=132?2 : 1.4,
              opacity: op?0.9:0.5, dashArray: op?null:"4 4", lineCap:"round" };
   },
-  onEachFeature: (f, l) => l.bindPopup(
-    `<b>${gaEsc(norm(f.properties.name)) || "Transmission line"}</b>`
-    + powerRow("Capacity", f.properties.capacitykv ? `${f.properties.capacitykv} kV` : "—")
-    + powerRow("Class", gaEsc(norm(f.properties.class)) || "—")
-    + powerRow("Status", gaEsc(norm(f.properties.operationalstatus)) || "—")),
+  onEachFeature: (f, l) => l.bindPopup(linePopup("Transmission line", [
+    ["Name",    gaEsc(norm(f.properties.name))],
+    ["Voltage", f.properties.capacitykv ? `${f.properties.capacitykv} kV` : ""],
+    ["Status",  gaEsc(norm(f.properties.operationalstatus))],
+  ])),
 });
 const substations = L.geoJSON(null, {
   pane: "powerPane",
@@ -507,6 +514,61 @@ onceOnAdd(substations, () => ensureIcons().finally(() =>
   fetchLayer(0, "NAME,VOLTAGEKV,OPERATIONALSTATUS,CLASS,LOCALITY", substations)));
 onceOnAdd(powerStations, () => ensureIcons().finally(() =>
   fetchLayer(1, "NAME,GENERATIONMW,GENERATIONTYPE,PRIMARYFUELTYPE,OWNER,OPERATIONALSTATUS,LOCALITY", powerStations)));
+
+// ---------- BYDA "Look Up and Live" WA — live LV network (overhead/underground) ----------
+// The full LV layer is ~15k segments — too big to bake in — and the service
+// blocks bulk pulls, but it answers spatial queries. So we stream only the
+// current map bounds, and only once zoomed in enough to keep the result small.
+// Drawn in a single style — the ASSET_TYPE overhead/underground flag isn't
+// reliable enough to map to dashed lines. NB: this hosted service keeps field
+// names UPPERCASE in f=geojson output (unlike the GA service, which lowercases).
+const LUAL_LV_URL = "https://services-ap1.arcgis.com/ug6sGLFkytbXYo4f/arcgis/rest/services/LUAL_WA/FeatureServer/3/query";
+const LUAL_ATTRIB = 'Distribution lines &copy; <a href="https://www.byda.com.au">BYDA</a> / Western Power — approximate, not for excavation';
+const LV_COLOR = "#5b9bd5";        // distribution blue (distinct from the yellow transmission lines)
+const LV_MIN_ZOOM = 12;            // below this a viewport holds too many segments
+const LV_PAGE = 2000;              // service maxRecordCount
+const LV_MAX_FEATURES = 6000;      // safety cap on a single viewport load
+
+const lvNetwork = L.geoJSON(null, {
+  pane: "powerPane", renderer: powerRenderer, attribution: LUAL_ATTRIB,
+  style: () => ({ color:LV_COLOR, weight:1.6, opacity:0.9, lineCap:"round" }),
+  onEachFeature: (f, l) => l.bindPopup(linePopup("Distribution line", [
+    ["Voltage", f.properties.OPERATING_VOLTAGE ? `${f.properties.OPERATING_VOLTAGE} kV` : ""],
+  ])),
+});
+overlayLayers["lv"] = lvNetwork;
+
+// Fetch every LV segment intersecting `bounds` (paging past the 2000 cap) as
+// GeoJSON. `token` lets a newer request cancel a stale one mid-page.
+let lvReqToken = 0;
+async function fetchLVBounds(bounds, token){
+  const env = `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`;
+  const base = `${LUAL_LV_URL}?where=1%3D1&geometry=${env}&geometryType=esriGeometryEnvelope`
+    + `&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects`
+    + `&outFields=OPERATING_VOLTAGE&orderByFields=OBJECTID&f=geojson`;
+  const feats = [];
+  for(let offset=0; ; offset+=LV_PAGE){
+    const r = await fetch(`${base}&resultOffset=${offset}&resultRecordCount=${LV_PAGE}`, {cache:"no-store"});
+    if(!r.ok) return null;
+    const fc = await r.json();
+    if(lvReqToken !== token) return null;          // superseded by a newer request
+    const got = fc.features || [];
+    feats.push(...got);
+    if(got.length < LV_PAGE || feats.length >= LV_MAX_FEATURES) break;
+  }
+  return { type:"FeatureCollection", features: feats };
+}
+async function loadLV(){
+  if(!map.hasLayer(lvNetwork)) return;
+  const token = ++lvReqToken;
+  if(map.getZoom() < LV_MIN_ZOOM){ lvNetwork.clearLayers(); return; }   // too far out
+  const fc = await fetchLVBounds(map.getBounds(), token).catch(()=>null);
+  if(lvReqToken !== token) return;                 // stale response — a newer load is running
+  lvNetwork.clearLayers();
+  if(fc && fc.features.length) lvNetwork.addData(fc);
+}
+lvNetwork.on("add",    () => { map.on("moveend", loadLV); loadLV(); });
+lvNetwork.on("remove", () => { map.off("moveend", loadLV); lvReqToken++; lvNetwork.clearLayers(); });
 
 // ---------- field accessors (events.geojson OR live current.geojson) ----------
 const F = {
@@ -833,11 +895,15 @@ function drawHeat(ctx){
   const yAt=iy=>{ let v=yc.get(iy); if(v===undefined){ v=map.latLngToContainerPoint([iy*heatDLat, 0]).y; yc.set(iy,v); } return v; };
   // crisp cells; the smooth-field look comes from a CSS blur on the canvas (see _reset)
   for(const c of heatCells){
-    const tlx=xAt(c.ix), tly=yAt(c.iy+1);   // top-left: left lng, higher lat (smaller y)
+    // Round each shared edge to integer px so neighbours tile EXACTLY — no gap
+    // and, crucially, no overlap: an overlap would double the per-cell alpha
+    // along shared edges and show up as grid lines once the blur is off.
+    const x0=Math.round(xAt(c.ix)), x1=Math.round(xAt(c.ix+1));
+    const y0=Math.round(yAt(c.iy+1)), y1=Math.round(yAt(c.iy));   // iy+1 = higher lat = smaller y
     // "% down" is linear; hours/count are log-normalized (see heatPos)
-    const t = lin ? c.val/heatMax : Math.log1p(c.val)/logMax;   // hours: log, else linear
+    const t = lin ? c.val/heatMax : Math.log1p(c.val)/logMax;
     ctx.fillStyle=heatRGBA(t, 0.25+0.55*t);
-    ctx.fillRect(tlx, tly, Math.ceil(xAt(c.ix+1)-tlx)+1, Math.ceil(yAt(c.iy)-tly)+1);   // +1 avoids seams
+    ctx.fillRect(x0, y0, Math.max(1,x1-x0), Math.max(1,y1-y0));
   }
 }
 // blur radius = a fixed multiple of the cell's on-screen height, so coarse
@@ -1054,6 +1120,7 @@ function build(geo){
   overlays["Transmission lines (GA)"] = powerLines;
   overlays["Substations (GA)"]        = substations;
   overlays["Power stations (GA)"]     = powerStations;
+  overlays["Distribution lines (BYDA)"] = lvNetwork;
   const layersCtrl = L.control.layers({ "Street":light, "Satellite (Esri)":esri }, overlays,
                    { position:"topright", collapsed:true }).addTo(map);
 
@@ -1064,6 +1131,7 @@ function build(geo){
     if (urlState.overlays.has("lines"))    powerLines.addTo(map);
     if (urlState.overlays.has("subs"))     substations.addTo(map);
     if (urlState.overlays.has("stations")) powerStations.addTo(map);
+    if (urlState.overlays.has("lv"))       lvNetwork.addTo(map);
   }
 
   // GitHub source link, stacked under the layers menu (top-right)
@@ -1099,6 +1167,11 @@ function build(geo){
     // shrinks as modes switch and layers toggle (refreshLegend draws dividers).
     const wrap = L.DomUtil.create("div","panel legendbox");
     legendBoxEl = wrap;
+    // let the user select/copy legend text: stop mousedown/touch from starting a
+    // map drag (which would otherwise cancel the selection), and don't let scroll
+    // wheel over the legend zoom the map
+    L.DomEvent.disableClickPropagation(wrap);
+    L.DomEvent.disableScrollPropagation(wrap);
     polyLegendEl = L.DomUtil.create("div","legsec", wrap);
     polyLegendEl.innerHTML = `<div><span class="swatch" style="background:#ff5a3c"></span>Unplanned outage</div>
                    <div><span class="swatch" style="background:#3b9dff"></span>Scheduled work</div>`;
@@ -1109,18 +1182,13 @@ function build(geo){
                    <div class="gradticks" id="heatLegTicks"></div>`;
     // SWIS row stays visible in both time + heatmap modes
     const swisLegendEl = L.DomUtil.create("div","legsec", wrap);
-    swisLegendEl.innerHTML = `<div><span class="swatch" style="background:transparent;border:1.5px dashed #5b6b7c"></span>SWIS extent (approx.)</div>`;
+    swisLegendEl.innerHTML = `<div><span class="swatch" style="background:transparent;border:1.5px dashed #5b6b7c"></span>SWIS extent</div>`;
     // Power-network key — rows appear only for the GA layers currently switched
     // on. The voltage ramp covers transmission lines + substations; the station
     // glyph mirrors the custom marker SVG.
     const powerLegendEl = L.DomUtil.create("div","legsec", wrap);
     const voltRows =
-      `<div style="font-weight:600;margin-bottom:2px">Voltage (lines)</div>`
-      + `<div><span class="swatch" style="background:#e4572e"></span>330 kV +</div>`
-      + `<div><span class="swatch" style="background:#f3a712"></span>220–275 kV</div>`
-      + `<div><span class="swatch" style="background:#ffd23f"></span>132 kV</div>`
-      + `<div><span class="swatch" style="background:#3fb950"></span>66–110 kV</div>`
-      + `<div><span class="swatch" style="background:#5b9bd5"></span>&lt; 66 kV</div>`;
+      `<div><span style="display:inline-block;width:15px;border-top:2px solid ${TX_COLOR};vertical-align:4px;margin-right:6px"></span>Transmission lines (GA)</div>`;
     const subRow =
       `<div style="margin-top:3px"><span class="legend-ico"><svg viewBox="0 0 24 24">`
       + `<rect x="3" y="3" width="18" height="18" rx="4.5" fill="#3fb950" stroke="#0d1117" stroke-width="1.6" paint-order="stroke"/>`
@@ -1131,16 +1199,21 @@ function build(geo){
       + `<rect x="3" y="3" width="18" height="18" rx="4.5" fill="#f5c518" stroke="#0d1117" stroke-width="1.6" paint-order="stroke"/>`
       + `<path d="M13.4 5.4 L7.4 13.3 h3.5 l-1.6 5.3 6.3-7.9 h-3.6 z" fill="#fff" stroke="#0d1117" stroke-width="0.5" stroke-linejoin="round"/>`
       + `</svg></span>Power station</div>`;
+    const lvRows = () => map.getZoom() < LV_MIN_ZOOM
+      ? `<div style="font-weight:600;margin:3px 0 2px">Distribution lines (BYDA)</div><div style="color:var(--muted)">zoom in to load</div>`
+      : `<div><span style="display:inline-block;width:15px;border-top:2px solid ${LV_COLOR};vertical-align:4px;margin-right:6px"></span>Distribution lines (BYDA)</div>`;
     function syncPowerLegend(){
       const volt = map.hasLayer(powerLines);
       const sub  = map.hasLayer(substations);
       const sta  = map.hasLayer(powerStations);
-      powerLegendEl.innerHTML = (volt ? voltRows : "") + (sub ? subRow : "") + (sta ? stationRow : "");
-      powerLegendEl.style.display = (volt || sub || sta) ? "" : "none";
+      const lv   = map.hasLayer(lvNetwork);
+      powerLegendEl.innerHTML = (volt ? voltRows : "") + (sub ? subRow : "") + (sta ? stationRow : "") + (lv ? lvRows() : "");
+      powerLegendEl.style.display = (volt || sub || sta || lv) ? "" : "none";
       refreshLegend();
     }
-    [powerLines, substations, powerStations].forEach(l => {
+    [powerLines, substations, powerStations, lvNetwork].forEach(l => {
       l.on("add", syncPowerLegend); l.on("remove", syncPowerLegend); });
+    map.on("zoomend", syncPowerLegend);   // LV row flips between "zoom in" and the OH/UG key
     syncPowerLegend();
     return wrap;
   };
