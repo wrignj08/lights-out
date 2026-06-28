@@ -114,14 +114,18 @@
   .legsec.divided { border-top:1px solid var(--line); margin-top:7px; padding-top:7px; }
   .heatLegTitle { font-weight:600; margin-bottom:3px; }
   .heatLegLog { font-weight:400; font-size:10px; color:var(--muted); }
-  .grad { width:172px; height:10px; border-radius:3px;
+  .grad { width:188px; height:10px; border-radius:3px;
           background:linear-gradient(to right, rgb(38,198,218), rgb(102,187,106), rgb(255,235,59), rgb(255,152,0), rgb(244,67,54), rgb(233,30,99)); }
   /* tick labels sit at their true log-scale x-position under the bar, so the
      bunching of high values is visible rather than implied */
-  .gradticks { position:relative; width:172px; height:18px; margin-top:1px; }
+  .gradticks { position:relative; width:188px; height:18px; margin-top:1px; }
   .gtick { position:absolute; top:0; display:flex; flex-direction:column; align-items:center;
            font-size:10px; line-height:1.2; color:var(--muted); white-space:nowrap; }
   .gtick::before { content:""; width:1px; height:4px; background:var(--line); margin-bottom:2px; }
+  /* top row (e.g. %): label above, notch pointing down to the bar */
+  .gradticks-top { margin-top:0; margin-bottom:1px; }
+  .gradticks-top .gtick { top:auto; bottom:0; flex-direction:column-reverse; }
+  .gradticks-top .gtick::before { margin-bottom:0; margin-top:2px; }
   .leaflet-control-layers { background:var(--panel)!important; color:var(--ink); border:1px solid var(--line)!important; border-radius:12px!important; }
   .leaflet-control-layers-expanded { padding:8px 10px!important; }
   .leaflet-control-layers label { font-size:12px; }
@@ -202,7 +206,7 @@
     <!-- liveStats last: its numbers change while playing, so keep it at the end
          so nothing after it reflows -->
     <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers</span>
-    <span class="ver">v1.14</span>
+    <span class="ver">v1.15</span>
   </div>
   <div class="tabsrow">
     <div class="tabs">
@@ -231,9 +235,8 @@
     <div class="heatrow" id="panelHeat" style="display:none">
       <div class="heatgroup">
         <div class="seg" id="heatMetric" role="group" aria-label="Heatmap metric">
-          <button type="button" class="segbtn active" data-metric="hours">Outage-hours</button>
+          <button type="button" class="segbtn active" data-metric="time">Outage time</button>
           <button type="button" class="segbtn" data-metric="count">Count</button>
-          <button type="button" class="segbtn" data-metric="down">Percentage outage-time</button>
         </div>
       </div>
     </div>
@@ -264,8 +267,9 @@ const urlState = parseHash();
 // markup defaults to Time — so a heat-mode load flashes the time UI until then.
 // Resolve the mode now and paint the correct tab/panel state synchronously.
 const initialMode = (urlState.has && urlState.mode) ? urlState.mode : "heat";
-const HEAT_METRICS = ["hours","count","down"];
-const initialMetric = HEAT_METRICS.includes(urlState.metric) ? urlState.metric : "hours";
+// metric is "time" (outage time, shown as % + hours) or "count"; old hours/down
+// links fold into the merged "time" view
+const initialMetric = urlState.metric==="count" ? "count" : "time";
 (function(){
   const heat = initialMode === "heat";
   document.getElementById("tabTime").classList.toggle("active", !heat);
@@ -740,6 +744,11 @@ function buildHeatPolys(){
   for(const f of heatFeatures){
     if(!f.geometry) continue;
     const p=f.properties; let s=F.aStart(p), e=F.aEnd(p);
+    // active_end can be a future restoration ETA (ongoing outages, planned works),
+    // so clip it to the last time we actually observed the outage — the heatmap
+    // should only ever reflect observed downtime, never a prediction.
+    const last=F.last(p);
+    if(last!=null && (e==null || e>last)) e=last;
     if(s==null) continue; if(e==null||e<s) e=s;
     const ring=ring0(f.geometry);
     let mnX=Infinity,mnY=Infinity,mxX=-Infinity,mxY=-Infinity,cx=0,cy=0;
@@ -757,41 +766,41 @@ function binHeat(a,b,metric,dLat,dLng,bounds){
     VX0=Math.floor(bounds.getWest()/dLng);  VX1=Math.floor(bounds.getEast()/dLng);
     VY0=Math.floor(bounds.getSouth()/dLat); VY1=Math.floor(bounds.getNorth()/dLat);
   }
-  const isDown = metric==="down", win = b-a;
+  const isCount = metric==="count";
   const grid=new Map();
-  // sum metrics (hours/count) accumulate a scalar; "down" collects each outage's
-  // clipped interval so overlaps can be unioned (not double-counted) per cell.
+  // "count" tallies distinct outages per cell (a scalar); "time" collects each
+  // outage's clipped interval and UNIONs them per cell, so two outages over the
+  // same area at the same time count once — a place is out or it isn't.
   const bump=(ix,iy,w)=>{ const k=ix+","+iy,c=grid.get(k); if(c)c.val+=w; else grid.set(k,{ix,iy,val:w}); };
   const push=(ix,iy,s,e)=>{ const k=ix+","+iy; let c=grid.get(k); if(!c){ c={ix,iy,val:0,ivs:[]}; grid.set(k,c); } c.ivs.push(s,e); };
   for(const f of heatPolys){
     const cs=Math.max(a,f.s), ce=Math.min(b,f.e); if(ce<=cs) continue;   // window overlap
-    const w = metric==="count" ? 1 : (ce-cs)/3600000;
     const ring=f.ring;
     const ix0=Math.max(VX0,Math.floor(f.mnX/dLng)), ix1=Math.min(VX1,Math.floor(f.mxX/dLng));
     const iy0=Math.max(VY0,Math.floor(f.mnY/dLat)), iy1=Math.min(VY1,Math.floor(f.mxY/dLat));
     let any=false;
     for(let ix=ix0;ix<=ix1;ix++) for(let iy=iy0;iy<=iy1;iy++)
-      if(pointInPolygon((ix+0.5)*dLng,(iy+0.5)*dLat,ring)){ isDown?push(ix,iy,cs,ce):bump(ix,iy,w); any=true; }
+      if(pointInPolygon((ix+0.5)*dLng,(iy+0.5)*dLat,ring)){ isCount?bump(ix,iy,1):push(ix,iy,cs,ce); any=true; }
     if(!any){   // polygon smaller than a cell -> its centroid cell (if in bounds)
       const gx=Math.floor(f.cx/dLng), gy=Math.floor(f.cy/dLat);
-      if(gx>=VX0&&gx<=VX1&&gy>=VY0&&gy<=VY1) isDown?push(gx,gy,cs,ce):bump(gx,gy,w);
+      if(gx>=VX0&&gx<=VX1&&gy>=VY0&&gy<=VY1) isCount?bump(gx,gy,1):push(gx,gy,cs,ce);
     }
   }
-  // collapse each "down" cell's intervals to a union %, so simultaneous outages
-  // over the same area count once (a cell maxes out at 100% of the window)
-  if(isDown) for(const c of grid.values()){ c.val=100*unionFrac(c.ivs,win); c.ivs=undefined; }
+  // collapse each cell's intervals to its union of covered hours (the % reading
+  // is just this against the window length, derived in the legend/tooltip)
+  if(!isCount) for(const c of grid.values()){ c.val=unionMs(c.ivs)/3600000; c.ivs=undefined; }
   return grid;
 }
-// fraction (0..1) of `win` ms covered by the union of [s,e] pairs in flat array
-function unionFrac(flat, win){
-  const n=flat.length>>1; if(!n || win<=0) return 0;
+// total ms covered by the union of [s,e] pairs in the flat array
+function unionMs(flat){
+  const n=flat.length>>1; if(!n) return 0;
   const ord=[]; for(let i=0;i<n;i++) ord.push(i);
   ord.sort((i,j)=>flat[i<<1]-flat[j<<1]);
   let total=0, cs=flat[ord[0]<<1], ce=flat[(ord[0]<<1)+1];
   for(let k=1;k<n;k++){ const i=ord[k]<<1, s=flat[i], e=flat[i+1];
     if(s>ce){ total+=ce-cs; cs=s; ce=e; } else if(e>ce) ce=e; }
   total+=ce-cs;
-  return total/win;
+  return total;
 }
 
 // Static color-scale max for a given cell size: the peak per-cell value across
@@ -813,16 +822,16 @@ const heatMaxCache = new Map();   // "metric,scanKm" -> peak per-cell value (ful
 function staticHeatMax(km){
   const {metric}=heatState;
   const sk=Math.max(km,HEAT_MAX_SCAN_KM);     // floor the scan resolution
-  // "% down" is inherently window-relative, so its peak depends on the selected
-  // window (not the full time domain) — key the cache on it. hours/count stay
-  // window-independent: a window can only ever be a subset of the full domain.
-  const key = metric==="down" ? `down,${heatState.a},${heatState.b},${sk}` : metric+","+sk;
+  // "time" is read as a % of the selected window too, so its peak is window-
+  // relative — key the cache on the window. "count" stays window-independent
+  // (a window can only ever be a subset of the full domain).
+  const key = metric==="time" ? `time,${heatState.a},${heatState.b},${sk}` : metric+","+sk;
   if(heatMaxCache.has(key)) return heatMaxCache.get(key);
   const dLat=sk/110.574, dLng=sk/(111.320*Math.cos(HLAT*Math.PI/180));
-  const a = metric==="down" ? heatState.a : (tMin!=null ? tMin : heatState.a);
-  const b = metric==="down" ? heatState.b : (tMax!=null ? tMax : heatState.b);
+  const a = metric==="time" ? heatState.a : (tMin!=null ? tMin : heatState.a);
+  const b = metric==="time" ? heatState.b : (tMax!=null ? tMax : heatState.b);
   let mx=0; for(const c of binHeat(a,b,metric,dLat,dLng,null).values()) if(c.val>mx) mx=c.val;
-  const v=Math.max(metric==="down"?0.01:1, mx); heatMaxCache.set(key,v); return v;
+  const v=Math.max(metric==="count"?1:0.001, mx); heatMaxCache.set(key,v); return v;
 }
 
 function recomputeHeat(){
@@ -835,50 +844,54 @@ function recomputeHeat(){
   gridMap=binHeat(a,b,metric,heatDLat,heatDLng,vb); heatCells=[...gridMap.values()];
   heatMax=staticHeatMax(km);              // static scale from the full dataset, not the view
   if(heatLegendEl){
-    el("heatLegTitle").textContent = metric==="count" ? "Outages per cell"
-      : metric==="down" ? "% of window with an outage" : "Outage-hours per cell";
-    el("heatLegScale").textContent = metric==="down" ? "" : "· log scale";
-    renderHeatTicks(heatMax, metric);
+    el("heatLegTitle").textContent = metric==="count" ? "Outage count" : "Outage time";
+    el("heatLegScale").textContent = "· log scale";
+    renderHeatLegend(metric, heatMax, b-a);
   }
 }
 
-// Value -> position (0..1) on the colour bar. Outage-hours and count span orders
-// of magnitude (a few outlier cells would crush the rest), so they use a log
-// ramp; "% down" is a bounded 0..100 quantity that reads more honestly linear.
-function heatPos(v, max, metric){ return metric==="down" ? v/max : Math.log1p(v)/Math.log1p(max); }
-// Nearest 1/2/5 * 10^k to x — a "nice" round step for an axis.
-function niceStep(x){
-  if(!(x>0)) return 1;
-  const e=Math.pow(10,Math.floor(Math.log10(x))), f=x/e;
-  return (f<1.5?1:f<3?2:f<7?5:10)*e;
-}
-// Lay round-number ticks at their true bar positions (plus 0 and max as
-// endpoints) so the scale's spacing is visible.
-function heatTicks(max, metric){
-  if(metric==="down"){             // linear axis: evenly spaced round steps
-    const step=niceStep(max/3), out=[];
-    for(let i=1;;i++){ const v=step*i; if(v>=max*0.88) break; if(v/max>0.1) out.push(v); }
-    return out;
-  }
-  // log axis: the 1/2/5 ladder lands evenly once log-positioned
+// Colour-bar position (0..1) from a value's FRACTION of the metric max, on a
+// fixed log ramp. Normalising on v/max (not v) makes the ramp scale-invariant,
+// so metrics that are the same data in different units — outage-hours and outage
+// percentage are both the union of covered time — map to identical colours.
+// HEAT_CONTRAST sets how much the low end is boosted (higher = more boost).
+const HEAT_CONTRAST = 100, HEAT_LOGK = Math.log1p(HEAT_CONTRAST);
+function heatPos(v, max){ const frac = max>0 ? (v>=max?1:v/max) : 0; return Math.log1p(HEAT_CONTRAST*frac)/HEAT_LOGK; }
+// Lay round-number ticks (the 1/2/5 ladder) at their true log positions, plus 0
+// and max as endpoints, so the scale's spacing is visible.
+function heatTicks(max){
   const out=[]; let lastT=-1;
   for(let e=0;e<8;e++) for(const m of [1,2,5]){
     const v=m*Math.pow(10,e); if(v>=max) break;
-    const t=heatPos(v,max,metric);
-    if(t<0.1||t>0.84) continue;      // keep clear of the 0 / max endpoints
-    if(t-lastT<0.2) continue;        // min spacing so labels don't collide
+    const t=heatPos(v,max);
+    if(t<0.1||t>0.8) continue;       // keep clear of the 0 / max endpoints (0.2 gap to max)
+    if(t-lastT<0.22) continue;       // min spacing so labels don't collide
     out.push(v); lastT=t;
   }
   return out;
 }
-function renderHeatTicks(max, metric){
-  const fmt=v=> metric==="count" ? `${Math.round(v)}`
-    : metric==="down" ? `${v<1&&v>0?v.toFixed(1):Math.round(v)}%` : `${Math.round(v)}h`;
-  const items=[{v:0,t:0}, ...heatTicks(max,metric).map(v=>({v,t:heatPos(v,max,metric)})), {v:max,t:1}];
-  el("heatLegTicks").innerHTML = items.map(({v,t})=>{
+// Render a tick row (0 + 1/2/5 ladder + max) into `elId`, labelled by `fmt`.
+function renderTicksInto(elId, max, fmt){
+  const items=[{v:0,t:0}, ...heatTicks(max).map(v=>({v,t:heatPos(v,max)})), {v:max,t:1}];
+  el(elId).innerHTML = items.map(({v,t})=>{
     const tx = t<=0.02 ? "0" : t>=0.98 ? "-100%" : "-50%";   // keep endpoints inside the bar
     return `<span class="gtick" style="left:${(t*100).toFixed(1)}%;transform:translateX(${tx})">${fmt(v)}</span>`;
   }).join("");
+}
+// "time" gets a dual-unit scale: % of the window on top, covered hours below
+// (same colour ramp, two labellings). "count" is a single bottom row.
+function renderHeatLegend(metric, max, winMs){
+  if(metric==="count"){
+    el("heatLegTicksTop").style.display="none";
+    renderTicksInto("heatLegTicks", max, v=>`${Math.round(v)}`);
+    return;
+  }
+  const hFmt=v=>`${v<1&&v>0?v.toFixed(1):Math.round(v)}h`;
+  const pFmt=v=>`${v<1&&v>0?v.toFixed(1):Math.round(v)}%`;
+  const winH=winMs/3600000;
+  el("heatLegTicksTop").style.display="";
+  renderTicksInto("heatLegTicks", max, hFmt);                       // hours, below the bar
+  renderTicksInto("heatLegTicksTop", winH>0?100*max/winH:0, pFmt);  // % of window, above
 }
 
 function drawHeat(ctx){
@@ -890,7 +903,6 @@ function drawHeat(ctx){
   // (Mercator x depends only on lng, y only on lat) instead of 2 projections
   // per cell. Cuts the projection count from O(cells) to O(cols+rows).
   const xc=new Map(), yc=new Map();
-  const lin = heatState && heatState.metric==="down", logMax=Math.log1p(heatMax);
   const xAt=ix=>{ let v=xc.get(ix); if(v===undefined){ v=map.latLngToContainerPoint([0, ix*heatDLng]).x; xc.set(ix,v); } return v; };
   const yAt=iy=>{ let v=yc.get(iy); if(v===undefined){ v=map.latLngToContainerPoint([iy*heatDLat, 0]).y; yc.set(iy,v); } return v; };
   // crisp cells; the smooth-field look comes from a CSS blur on the canvas (see _reset)
@@ -900,8 +912,7 @@ function drawHeat(ctx){
     // along shared edges and show up as grid lines once the blur is off.
     const x0=Math.round(xAt(c.ix)), x1=Math.round(xAt(c.ix+1));
     const y0=Math.round(yAt(c.iy+1)), y1=Math.round(yAt(c.iy));   // iy+1 = higher lat = smaller y
-    // "% down" is linear; hours/count are log-normalized (see heatPos)
-    const t = lin ? c.val/heatMax : Math.log1p(c.val)/logMax;
+    const t = heatPos(c.val, heatMax);   // fraction-of-max log ramp
     ctx.fillStyle=heatRGBA(t, 0.25+0.55*t);
     ctx.fillRect(x0, y0, Math.max(1,x1-x0), Math.max(1,y1-y0));
   }
@@ -1080,19 +1091,23 @@ function applyData(geo, firstTime){
     outageLayer.clearLayers(); outageLayer.addData(shown);   // in-place, keep the view
   }
 
-  // time domain from active windows (includes future planned works)
+  // time domain from active windows, but clamped to the observation horizon:
+  // planned works' future starts/ends (and ongoing outages' future restoration
+  // ETAs) must not push the picker — or its default end date — past the last scrape.
   const starts = feats.map(F.aStart).filter(v=>v!=null);
   const ends   = feats.map(F.aEnd).filter(v=>v!=null);
   const seen   = feats.map(F.first).filter(v=>v!=null);   // when each outage was first observed
+  const lastSeen = feats.map(F.last).filter(v=>v!=null);  // when each outage was last observed
   if (starts.length){
     temporal=true;
     // The dataset only has information from the first snapshot onward, so don't let
     // a few stale records' pre-observation reported starts drag the timeline back
     // (e.g. a "likely_stuck" outage reported May 31 but first seen June 9). Floor
-    // tMin at the earliest observation time.
+    // tMin at the earliest observation time, and cap tMax at the latest one.
     const obsStart = seen.length ? Math.min(...seen) : Math.min(...starts);
+    const obsEnd   = lastSeen.length ? Math.max(...lastSeen) : Math.max(...ends, ...starts);
     tMin = Math.max(Math.min(...starts), obsStart);
-    tMax = Math.max(...ends, ...starts);
+    tMax = Math.min(Math.max(...ends, ...starts), obsEnd);
     if (tMax>tMin){
       if (firstTime) el("slider").value = 0;   // start at the beginning of the dataset
       buildSeries(); drawSpark();
@@ -1177,7 +1192,8 @@ function build(geo){
                    <div><span class="swatch" style="background:#3b9dff"></span>Scheduled work</div>`;
     heatLegendEl = L.DomUtil.create("div","legsec", wrap);
     heatLegendEl.style.display="none";
-    heatLegendEl.innerHTML = `<div class="heatLegTitle"><span id="heatLegTitle">Outage-hours per cell</span> <span class="heatLegLog" id="heatLegScale">· log scale</span></div>
+    heatLegendEl.innerHTML = `<div class="heatLegTitle"><span id="heatLegTitle">Outage time</span> <span class="heatLegLog" id="heatLegScale">· log scale</span></div>
+                   <div class="gradticks gradticks-top" id="heatLegTicksTop"></div>
                    <div class="grad"></div>
                    <div class="gradticks" id="heatLegTicks"></div>`;
     // SWIS row stays visible in both time + heatmap modes
@@ -1284,7 +1300,7 @@ el("tabHeat").onclick = () => setMode("heat");
 
 // --- heatmap metric toggle (segmented control) ---
 const metricBtns = [...document.querySelectorAll("#heatMetric .segbtn")];
-function currentMetric(){ return (document.querySelector("#heatMetric .segbtn.active")||{}).dataset?.metric || "hours"; }
+function currentMetric(){ return (document.querySelector("#heatMetric .segbtn.active")||{}).dataset?.metric || "time"; }
 metricBtns.forEach(b => b.onclick = () => {
   metricBtns.forEach(x => x.classList.toggle("active", x===b));
   if(heatTip && map.hasLayer(heatTip)) map.removeLayer(heatTip);   // drop the stale pinned readout
@@ -1309,10 +1325,16 @@ function showHeatTip(latlng){
   const ix=Math.floor(latlng.lng/heatDLng), iy=Math.floor(latlng.lat/heatDLat);
   const c=gridMap.get(ix+","+iy);
   if(!c){ if(map.hasLayer(heatTip)) map.removeLayer(heatTip); return false; }
-  heatTip.setLatLng(latlng).setContent(
-    heatState.metric==="count" ? `${c.val} outage${c.val>1?"s":""}`
-    : heatState.metric==="down" ? `${c.val<1&&c.val>0?c.val.toFixed(1):Math.round(c.val)}% of window down`
-    : `${c.val.toFixed(1)} outage-hours`);
+  let content;
+  if(heatState.metric==="count"){
+    content = `${c.val} outage${c.val>1?"s":""}`;
+  } else {
+    const winH=(heatState.b-heatState.a)/3600000, pct=winH>0?100*c.val/winH:0;
+    const h = c.val<1&&c.val>0 ? c.val.toFixed(1) : Math.round(c.val);
+    const p = pct<1&&pct>0 ? pct.toFixed(1) : Math.round(pct);
+    content = `${h}h out (${p}% of window)`;
+  }
+  heatTip.setLatLng(latlng).setContent(content);
   if(!map.hasLayer(heatTip)) heatTip.addTo(map);
   return true;
 }
