@@ -1,0 +1,60 @@
+name: publish
+
+# Rebuild events.geojson from the full snapshot history and deploy the viewer to
+# GitHub Pages. Dispatched by scrape.yml whenever a new snapshot is committed;
+# also runs hourly as a safety net (retries a transient Pages deploy failure and
+# refreshes time-derived fields during long quiet periods).
+#
+# cancel-in-progress lets a newer publish supersede one stuck in Pages' queue,
+# instead of both timing out — which was the original deploy-failure cause.
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "17 * * * *"       # hourly safety net / self-heal
+
+permissions:
+  contents: read
+  pages: write                 # deploy Pages
+  id-token: write              # Pages deployment auth
+
+concurrency:
+  group: publish
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0        # full history — build_events.py walks every snapshot
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Rebuild events table from history
+        run: python3 build_events.py
+
+      - name: Assemble Pages site
+        run: |
+          mkdir -p _site/data
+          cp map.html _site/index.html
+          cp map.html _site/map.html
+          cp data/events.geojson  _site/data/events.geojson
+          cp data/current.geojson _site/data/current.geojson
+          cp data/swis_boundary.geojson _site/data/swis_boundary.geojson
+
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true       # turn Pages on (Actions source) on first run
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

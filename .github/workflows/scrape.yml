@@ -1,42 +1,43 @@
-name: scrape-and-publish
+name: scrape
 
-# Git-scrape the Western Power outage feed, then publish the viewer to GitHub
-# Pages. The reconstructed events.geojson is built in CI and deployed with the
-# site (never committed) so the repo stays churn-free.
+# Git-scrape the Western Power outage feed and commit a snapshot when the map
+# changes. Publishing the viewer is a separate workflow (publish.yml) that this
+# job dispatches only when there's a new snapshot — so a slow/stuck Pages deploy
+# can never queue up behind (and time out) the next scrape.
+#
+# Cadence note: the feed changes ~every 26-90 min, and GitHub's scheduler drops
+# most fires on an aggressive cron anyway, so */20 loses no real freshness while
+# keeping the run queue clear.
 on:
   schedule:
-    - cron: "*/10 * * * *"     # every 10 minutes (GitHub may delay under load)
+    - cron: "*/20 * * * *"     # every 20 minutes (GitHub may still delay under load)
   workflow_dispatch: {}
 
 permissions:
   contents: write              # push snapshot commits
-  pages: write                 # deploy Pages
-  id-token: write              # Pages deployment auth
+  actions: write               # dispatch publish.yml when data changes
 
 concurrency:
-  group: scrape-and-publish
+  group: scrape
   cancel-in-progress: false
 
 jobs:
-  run:
+  scrape:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0        # full history — build_events.py walks every snapshot
+      - uses: actions/checkout@v5   # shallow is fine — we only diff/commit current.geojson
 
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Scrape and commit snapshot (only if changed)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python3 scrape.py
           if git diff --quiet -- data/current.geojson; then
-            echo "no change in outage map; nothing to commit"
+            echo "no change in outage map; nothing to publish"
           else
             count=$(python3 -c "import json;print(len(json.load(open('data/current.geojson'))['features']))")
             git config user.name  "outage-scraper[bot]"
@@ -44,27 +45,6 @@ jobs:
             git add data/current.geojson
             git commit -m "snapshot: ${count} outages @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             git push
+            # A GITHUB_TOKEN push does NOT fire on:push workflows, so dispatch explicitly.
+            gh workflow run publish.yml
           fi
-
-      - name: Rebuild events table from history
-        run: python3 build_events.py
-
-      - name: Assemble Pages site
-        run: |
-          mkdir -p _site/data
-          cp map.html _site/index.html
-          cp map.html _site/map.html
-          cp data/events.geojson  _site/data/events.geojson
-          cp data/current.geojson _site/data/current.geojson
-          cp data/swis_boundary.geojson _site/data/swis_boundary.geojson
-
-      - uses: actions/configure-pages@v5
-        with:
-          enablement: true       # turn Pages on (Actions source) on first run
-
-      - uses: actions/upload-pages-artifact@v4
-        with:
-          path: _site
-
-      - id: deploy
-        uses: actions/deploy-pages@v4
