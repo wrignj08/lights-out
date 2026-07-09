@@ -7,19 +7,15 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23f5c518' d='M13 2L4 14h6l-1 8l9-12h-6z'/%3E%3C/svg%3E" />
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
-  :root { --bg:#eef2f6; --panel:#ffffff; --ink:#1a2230; --muted:#5b6b7c;
-          --unplanned:#ff5a3c; --planned:#3b9dff; --accent:#0f9d77; --line:#d4dbe3;
-          --mapbg:#dfe5ec; --field:#ffffff; --btn:#eef2f6; --btn-hover:#e1e7ee;
+  /* Dark mode always — the app uses a single dark theme regardless of OS setting. */
+  :root { --bg:#0e151f; --panel:#19222e; --ink:#e6ecf3; --muted:#9fb0c2;
+          --unplanned:#ff6b50; --planned:#4aa8ff; --accent:#1ec08f; --line:#2c3a4d;
+          --mapbg:#0c1118; --field:#222d3d; --btn:#222d3d; --btn-hover:#2c3a4d;
           /* iOS: the map is drawn this much taller than the large viewport so its
              tiles paint behind/around Safari's translucent URL bar with no gap.
              0 on desktop; bumped on mobile (see the mobile media query). */
           --mobile-browser-chrome-overscan:0px; }
-  /* Auto dark mode — follows the OS/browser theme via prefers-color-scheme. */
-  @media (prefers-color-scheme: dark) {
-    :root { --bg:#0e151f; --panel:#19222e; --ink:#e6ecf3; --muted:#9fb0c2;
-            --unplanned:#ff6b50; --planned:#4aa8ff; --accent:#1ec08f; --line:#2c3a4d;
-            --mapbg:#0c1118; --field:#222d3d; --btn:#222d3d; --btn-hover:#2c3a4d; }
-  }
+  html { color-scheme:dark; }  /* native controls (date pickers, scrollbars) render dark */
   html,body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
   html { height:100%; }
   /* 100lvh = the LARGE viewport (as if the URL bar is retracted), so the page
@@ -206,7 +202,7 @@
     <!-- liveStats last: its numbers change while playing, so keep it at the end
          so nothing after it reflows -->
     <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers</span>
-    <span class="ver">v1.15</span>
+    <span class="ver">v1.16</span>
   </div>
   <div class="tabsrow">
     <div class="tabs">
@@ -289,13 +285,9 @@ const map = L.map("map", { preferCanvas:true, zoomControl:false, attributionCont
 map.setView(urlState.z!=null ? [urlState.lat, urlState.lng] : [-31.95, 116.0],
             urlState.z!=null ? urlState.z : 8);
 
-// Base street map auto-follows the OS theme: CARTO light_all in light mode,
-// dark_all in dark mode. Same layer object so the layers control + URL state stay intact.
-const darkMM = window.matchMedia("(prefers-color-scheme: dark)");
-const cartoUrl = () => `https://{s}.basemaps.cartocdn.com/${darkMM.matches?"dark_all":"light_all"}/{z}/{x}/{y}{r}.png`;
-const light = L.tileLayer(cartoUrl(), {
+// Base street map: the app is dark-only, so always use CARTO dark_all tiles.
+const light = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
   attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>', subdomains:"abcd", maxZoom:20 });
-darkMM.addEventListener("change", () => light.setUrl(cartoUrl()));
 const esri = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
   attribution:'Tiles &copy; <a href="https://www.esri.com">Esri</a> &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community', maxZoom:19 });
 (urlState.base==="esri" ? esri : light).addTo(map);
