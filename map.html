@@ -202,7 +202,7 @@
     <!-- liveStats last: its numbers change while playing, so keep it at the end
          so nothing after it reflows -->
     <span class="stat" id="liveStats"><b id="n">0</b> active · <b id="cust">0</b> customers</span>
-    <span class="ver">v1.16</span>
+    <span class="ver">v1.17</span>
   </div>
   <div class="tabsrow">
     <div class="tabs">
@@ -622,10 +622,7 @@ let heatState=null, heatCells=null, heatMax=1, heatDLat=0, heatDLng=0;
 // every browser incl. iOS Safari — canvas ctx.filter renders blank there). The
 // radius tracks the cell's pixel size, so it smooths equally at every zoom.
 // 0 disables (crisp grid).
-const HEAT_BLUR_K = 1.6;
-// At deep zoom the smoothing hides the per-cell structure; past this zoom drop
-// the blur entirely and show the native grid cells crisply.
-const HEAT_CRISP_ZOOM = 15;
+const HEAT_BLUR_K = 0;
 let polyLegendEl=null, heatLegendEl=null, legendBoxEl=null;
 const TOL = 5*60*1000;
 
@@ -652,15 +649,16 @@ function dateToMs(val, endOfDay){ if(!val) return NaN; const [y,m,d]=val.split("
 // cell size (km) by zoom; fixed reference latitude keeps the grid stable on pan
 const HLAT = -32;
 function cellKmForZoom(z){
-  // 10x higher-res blocks (linear cell size / sqrt(10) => ~10x as many cells per area)
-  if(z<=8) return 3.16;
-  if(z===9) return 1.58;
-  if(z===10) return 0.632;
-  if(z===11) return 0.316;
-  if(z===12) return 0.158;
-  if(z===13) return 0.079;
-  if(z===14) return 0.0316;
-  return 0.0158;          // z >= 15 -> ~16m
+  // Cell size halved at every zoom vs. the prior ladder => 2x linear resolution
+  // (4x as many cells per area) for a finer grid.
+  if(z<=8) return 1.58;
+  if(z===9) return 0.79;
+  if(z===10) return 0.316;
+  if(z===11) return 0.158;
+  if(z===12) return 0.079;
+  if(z===13) return 0.0395;
+  if(z===14) return 0.0158;
+  return 0.0079;          // z >= 15 -> ~8m
 }
 
 // Full-viewport canvas overlay: re-bins only the visible area at the current
@@ -913,7 +911,6 @@ function drawHeat(ctx){
 // (zoomed-out) cells get smoothed as much as fine ones. Returns CSS px.
 function heatBlurPx(){
   if(!(HEAT_BLUR_K>0) || !heatDLat) return 0;
-  if(map.getZoom() >= HEAT_CRISP_ZOOM) return 0;   // deep zoom: show the native grid
   const o=map.latLngToContainerPoint([0,0]), o2=map.latLngToContainerPoint([heatDLat,0]);
   return Math.min(48, Math.abs(o2.y-o.y)*HEAT_BLUR_K);
 }
