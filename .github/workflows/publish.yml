@@ -1,13 +1,23 @@
 name: publish
 
 # Rebuild events.geojson from the full snapshot history and deploy the viewer to
-# GitHub Pages. Dispatched by scrape.yml whenever a new snapshot is committed;
-# also runs hourly as a safety net (retries a transient Pages deploy failure and
-# refreshes time-derived fields during long quiet periods).
+# GitHub Pages. Dispatched by scrape.yml whenever a new snapshot is committed,
+# fires on pushes that touch the viewer itself, and runs hourly as a safety net
+# (retries a transient Pages deploy failure and refreshes time-derived fields
+# during long quiet periods).
 #
 # cancel-in-progress lets a newer publish supersede one stuck in Pages' queue,
 # instead of both timing out — which was the original deploy-failure cause.
 on:
+  # Viewer/builder edits pushed by hand deploy themselves. data/ is deliberately
+  # absent: snapshot commits are pushed with GITHUB_TOKEN, which never fires
+  # on:push anyway (see scrape.yml), and scrape.yml dispatches this explicitly.
+  push:
+    branches: [main]
+    paths:
+      - map.html
+      - build_events.py
+      - .github/workflows/publish.yml
   workflow_dispatch: {}
   schedule:
     - cron: "17 * * * *"       # hourly safety net / self-heal
