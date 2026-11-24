@@ -36,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+      url: ${{ steps.deploy.outputs.page_url || steps.deploy_retry.outputs.page_url }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -66,5 +66,21 @@ jobs:
         with:
           path: _site
 
+      # deploy-pages looks the artifact up through the API immediately after
+      # upload, and that listing is eventually consistent: roughly a third of
+      # runs failed with 'No artifacts named "github-pages" were found' even
+      # though the upload had finalized. Give it a moment, and retry once.
+      - name: Let artifact listing catch up
+        run: sleep 10
+
       - id: deploy
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      - name: Wait before retrying deploy
+        if: steps.deploy.outcome == 'failure'
+        run: sleep 30
+
+      - id: deploy_retry
+        if: steps.deploy.outcome == 'failure'
         uses: actions/deploy-pages@v4
